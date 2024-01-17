@@ -20,12 +20,12 @@ class EntityDsl(EntityProcessor):
                 position = {
                     'x': room.position[0],
                     'y': room.position[1],
-                    'z': height
+                    'z': height,
                 }
                 look_at = {
-                    'x':room.position[0] + 1,
-                    'y':room.position[1],
-                    'z':1200.0 + random.randint(1, 300)
+                    'x': room.position[0],
+                    'y': room.position[1] + 1000,
+                    'z': height,
                 }
                 # for radius in radius_list:
                 self.shader.world.add_camera(
@@ -34,8 +34,8 @@ class EntityDsl(EntityProcessor):
                     position=position,
                     lookAt=look_at,
                     up=[0, 0, 1],
-                    imageWidth=2000,
-                    imageHeight=1000,
+                    imageWidth=1024,
+                    imageHeight=512,
                     vfov=104,
                     hfov=120
                 )
