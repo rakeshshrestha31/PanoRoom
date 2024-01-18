@@ -1,6 +1,3 @@
-import math
-import random
-
 from ksecs.ECS.processors.pixel_processor import PixelProcessor
 from ksecs.ECS.processors.entity_processor import EntityProcessor
 from ksecs.ECS.processors.render_processor import RenderProcessor
@@ -14,8 +11,8 @@ class EntityDsl(EntityProcessor):
         # radius_list = [0, 1000, 2000]
         pic_index = 0
         for room in self.shader.world.rooms:
-            if room._id == '796775':
-                height = 1200.0 + random.randint(1, 300)
+            if room._id == '4430':
+                height = 1200.0
 
                 position = {
                     'x': room.position[0],
@@ -36,8 +33,6 @@ class EntityDsl(EntityProcessor):
                     up=[0, 0, 1],
                     imageWidth=1024,
                     imageHeight=512,
-                    vfov=104,
-                    hfov=120
                 )
                 pic_index += 1
 
