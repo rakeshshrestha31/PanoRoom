@@ -4,7 +4,6 @@ import sys
 import numpy as np
 import cv2
 import open3d as o3d
-# import trimesh
 
 def np_coorx2u(coorx, coorW=1024):
     return ((coorx + 0.5) / coorW - 0.5) * 2 * np.pi
@@ -29,10 +28,9 @@ def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_col
         coorx, coory = np.meshgrid(np.arange(w), np.arange(h))
         us = np_coorx2u(coorx, w)
         vs = np_coory2v(coory, h)
-        us,vs = np.meshgrid(np.linspace(-np.pi, np.pi, w),np.linspace(np.pi/2,-np.pi/2,h))
 
-        X = np.expand_dims(np.cos(vs) * np.cos(us), 2)
-        Y = np.expand_dims(np.cos(vs) * np.sin(us), 2)
+        X = np.expand_dims(np.cos(vs) * np.sin(us), 2)
+        Y = np.expand_dims(np.cos(vs) * np.cos(us), 2)
         Z = np.expand_dims(np.sin(vs), 2)
         unit_map = np.concatenate([X, Y, Z], axis=2)
 

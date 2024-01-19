@@ -20,8 +20,8 @@ class EntityDsl(EntityProcessor):
                     'z': height,
                 }
                 look_at = {
-                    'x': room.position[0]+ 500,
-                    'y': room.position[1],
+                    'x': room.position[0],
+                    'y': room.position[1] + 500,
                     'z': height,
                 }
                 # for radius in radius_list:

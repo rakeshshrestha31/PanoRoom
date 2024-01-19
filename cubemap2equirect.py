@@ -43,20 +43,12 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
     # down face
     img_list.append(img.crop((3 * face_w, 0, 4 * face_w, h)))
     
-    # for img_pil in img_list:
-    #     if len(img_pil.split()) >= 3:
-    #         img_pil = np.array(img_pil)[:,:,:3]
-    #     elif len(img_pil.split()) == 1:
-    #         img_pil = np.array(img_pil)
-    #         print(f'img_pil: {img_pil.shape}')
-    #         img_pil = img_pil[:,:,np.newaxis]
     if len(img.split()) >= 3:
         img_list = np.array([np.array(img)[:,:,:3] for img in img_list])
     elif len(img.split()) == 1:
         # img_list = np.array([np.repeat(np.array(img)[:,:,np.newaxis], 3, axis=2) for img in img_list])
         if image_type == 'depth':
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint16) for img in img_list])
-            # img_list = np.array([(img/1000.0).astype(np.float) for img in img_list])
         else:
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint8) for img in img_list])
     else:
@@ -86,9 +78,9 @@ def cube2panorama(input_dir:str, output_dir:str, pano_width:int=1024, pano_heigh
 
     # cubemap fovs, phi and theta angles
     F_P_T_lst = [[90, 0, 0],  # front
-                 [90, 90, 0], # right
-                 [90, 180, 0], # back
-                 [90, 270, 0], # left
+                 [90, -90, 0], # right
+                 [90, -180, 0], # back
+                 [90, -270, 0], # left
                  [90, 0, 90], # up
                  [90, 0, -90]] # down
     for img_type, img_path in zip(convert_keys, convert_images_path_lst):
@@ -126,10 +118,10 @@ if __name__ == "__main__":
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    # cube2panorama(input_dir, output_dir, convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
+    cube2panorama(input_dir, output_dir, convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
     
     # check depth
-    rgb_img_filepath = osp.join(output_dir, 'albedo.png')
+    rgb_img_filepath = osp.join(output_dir, 'rgb.png')
     depth_img_filepath = osp.join(output_dir, 'depth.png')
     saved_color_pcl_filepath = osp.join(output_dir, 'points3d.ply')
     vis_color_pointcloud(rgb_img_filepath, depth_img_filepath, saved_color_pcl_filepath, depth_scale=4000.0, normaliz=False)
