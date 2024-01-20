@@ -11,30 +11,30 @@ class EntityDsl(EntityProcessor):
         # radius_list = [0, 1000, 2000]
         pic_index = 0
         for room in self.shader.world.rooms:
-            if room._id == '4430':
-                height = 1200.0
+            # if room._id == '4430':
+            height = 1200.0
 
-                position = {
-                    'x': room.position[0],
-                    'y': room.position[1],
-                    'z': height,
-                }
-                look_at = {
-                    'x': room.position[0],
-                    'y': room.position[1] + 500,
-                    'z': height,
-                }
-                # for radius in radius_list:
-                self.shader.world.add_camera(
-                    id=str(pic_index),
-                    cameraType="PANORAMA",
-                    position=position,
-                    lookAt=look_at,
-                    up=[0, 0, 1],
-                    imageWidth=1024,
-                    imageHeight=512,
-                )
-                pic_index += 1
+            position = {
+                'x': room.position[0],
+                'y': room.position[1],
+                'z': height,
+            }
+            look_at = {
+                'x': room.position[0],
+                'y': room.position[1] + 500,
+                'z': height,
+            }
+            # for radius in radius_list:
+            self.shader.world.add_camera(
+                id=str(pic_index),
+                cameraType="PANORAMA",
+                position=position,
+                lookAt=look_at,
+                up=[0, 0, 1],
+                imageWidth=1024,
+                imageHeight=512,
+            )
+            pic_index += 1
 
 
 class PixelDsl(PixelProcessor):
