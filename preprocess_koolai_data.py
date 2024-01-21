@@ -100,7 +100,7 @@ def cube2panorama(input_dir:str,
         elif img_type == 'instance' or img_type == 'semantic':
             img = img.astype(np.uint8)
             img = img.reshape((pano_height, pano_width))
-        print(f'{img_type}, img shape: {img.shape}')
+        # print(f'{img_type}, img shape: {img.shape}')
         # plt.imshow(img)
         # plt.show()
         img = Image.fromarray(img)
@@ -203,11 +203,13 @@ if __name__ == "__main__":
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
         camera_output_dir = osp.join(room_output_dir, f'{new_cam_id_in_room}')
         os.makedirs(camera_output_dir, exist_ok=True)
-        # copy rgb image
-        raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
-        Image.open(raw_rgb_img_path).save(osp.join(camera_output_dir, 'rgb.png'))
         
         target_pano_height, target_pano_width = 512, 1024
+        # copy rgb image
+        raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
+        rgb_img = Image.open(raw_rgb_img_path).resize((target_pano_width, target_pano_height))
+        rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+        
         # convert cubemap to panorama, and copy rgb panroama
         cube2panorama(input_dir=rast_view_folder, 
                       output_dir=camera_output_dir,
@@ -227,6 +229,8 @@ if __name__ == "__main__":
         depth_img_filepath = osp.join(camera_output_dir, 'depth.png')
         saved_color_pcl_filepath = osp.join(camera_output_dir, 'points3d.ply')
         vis_color_pointcloud(rgb_img_filepath, depth_img_filepath, saved_color_pcl_filepath, depth_scale=4000.0, normaliz=False)
+        
+        print(f"---------------- process room {room_id_str} camera {new_cam_id_in_room} ----------------")
     
     # save camera meta data in each room
     for k, v in camera_stat_dict.items():
