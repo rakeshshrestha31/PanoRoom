@@ -8,8 +8,11 @@ from argparse import ArgumentParser
 
 from PIL import Image
 from typing import List, Dict
+import random
+
 from e2c_lib import multi_Perspec2Equirec as m_P2E
 from pano_utils import vis_color_pointcloud
+from meta import NYU40_LABEL_TO_ADEK_COLOR
 
 def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.ndarray]:
     """ read koolai cubemap image
@@ -59,6 +62,27 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
     # plt.show()
     return img_list
 
+def decode_nyu40_semantic_image(sem_image_nyu40:np.ndarray, visited:Dict=NYU40_LABEL_TO_ADEK_COLOR):
+    height, width = sem_image_nyu40.shape[:2]
+
+    image_decoded = sem_image_nyu40.reshape((height, width)).astype(np.uint8)  # each pixel represent one catgory in NYU40
+
+    unique_image = np.unique(image_decoded)
+
+    for semantic in unique_image:
+        if visited.get(semantic) is None:
+            print(f'semantic label index {semantic} is absent!')
+            visited[semantic] = np.array(
+                [random.randint(0, 256), random.randint(0, 256), random.randint(0, 256)])
+
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    for semantic in unique_image:
+        image[image_decoded == semantic] = visited[semantic]
+
+    # new_image = Image.fromarray(image)
+    return image
+    
+
 def cube2panorama(input_dir:str, 
                   output_dir:str, 
                   pano_width:int=1024, 
@@ -97,12 +121,15 @@ def cube2panorama(input_dir:str,
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'albedo' or img_type == 'normal':
             img = img.astype(np.uint8)
-        elif img_type == 'instance' or img_type == 'semantic':
+        elif img_type == 'instance':
             img = img.astype(np.uint8)
             img = img.reshape((pano_height, pano_width))
-        # print(f'{img_type}, img shape: {img.shape}')
-        # plt.imshow(img)
-        # plt.show()
+        elif img_type == 'semantic':
+            img = decode_nyu40_semantic_image(img)
+            img = img.astype(np.uint8)
+            print(f'{img_type}, img shape: {img.shape}')
+            # plt.imshow(img)
+            # plt.show()
         img = Image.fromarray(img)
         img.save(osp.join(output_dir, osp.basename(img_path)))
     
@@ -215,7 +242,7 @@ if __name__ == "__main__":
                       output_dir=camera_output_dir,
                       pano_height=target_pano_height,
                       pano_width=target_pano_width, 
-                      convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
+                      convert_keys=['depth', 'normal', 'instance', 'semantic'])
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             room_id=int(room_id_str), 
