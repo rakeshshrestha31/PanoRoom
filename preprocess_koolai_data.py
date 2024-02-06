@@ -162,20 +162,51 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_id:int, new_cam_id:int, new_img
     new_cam_meta_dict = {}
     new_cam_meta_dict["camera_id"] = new_cam_id
     new_cam_meta_dict["room_id"] = room_id
-    new_cam_meta_dict["camera_up"] = {"x": 0.0, "y": 0.0,"z": 1.0}
-    new_cam_meta_dict["camera_forward"] = {"x": 0.0, "y": 1.0,"z": 0.0}
-    
-    raw_cam_pos_dict = raw_cam_meta_dict["camera_position"]
+    # new_cam_meta_dict["camera_up"] = {"x": 0.0, "y": 0.0,"z": 1.0}
+    new_cam_meta_dict["camera_up"] = raw_cam_meta_dict["camera_up"]
+    look_at_pos = np.array([raw_cam_meta_dict["camera_look_at"]['x'],
+                            raw_cam_meta_dict["camera_look_at"]['y'],
+                            raw_cam_meta_dict["camera_look_at"]['z']]) * 0.001
+
     #  scale to meter
-    raw_cam_pos = np.array([raw_cam_pos_dict["x"], raw_cam_pos_dict["y"], raw_cam_pos_dict["z"]]) * 0.001
+    raw_cam_pos = np.array([raw_cam_meta_dict["camera_position"]["x"], 
+                            raw_cam_meta_dict["camera_position"]["y"], 
+                            raw_cam_meta_dict["camera_position"]["z"]]) * 0.001
+    look_at_dir = look_at_pos - raw_cam_pos
+    look_at_dir = look_at_dir / np.linalg.norm(look_at_dir)
+    new_cam_meta_dict["camera_forward"] = {"x": look_at_dir[0], "y": look_at_dir[1], "z": look_at_dir[2]}
+
     new_cam_meta_dict["camera_position"] = {"x": raw_cam_pos[0], "y": raw_cam_pos[1], "z": raw_cam_pos[2]}
     
+    # calculate camera pose w2c
+    up = np.array(raw_cam_meta_dict["camera_up"]['x'],
+                  raw_cam_meta_dict["camera_up"]['y'],
+                  raw_cam_meta_dict["camera_up"]['z'])
+    up = up / np.linalg.norm(up)
+    x = np.cross(look_at_dir, up)
+    x = x / np.linalg.norm(x)
+    z = np.cross(x, look_at_dir)
+    z = z/np.linalg.norm(z)
+    c2w = np.eye(4)
+    c2w[:3, 0] = x
+    c2w[:3, 1] = look_at_dir
+    c2w[:3, 2] = z
+    c2w[:3, 3] = raw_cam_pos
+    
+    axis_mat = np.array([[1, 0, 0, 0],
+                         [0, 0, -1, 0],
+                         [0, 1, 0, 0],
+                         [0, 0, 0, 1]])
+    w2c = np.linalg.inv(c2w)
+    w2c = axis_mat @ w2c
+    new_cam_meta_dict["camera_transform"] = w2c.tolist()
+    
     # convert pose from w2c to c2w
-    raw_cam_pose = np.array(raw_cam_meta_dict["camera_transform"]).reshape((4, 4))
-    new_cam_pose = np.linalg.inv(raw_cam_pose)
-    new_cam_pose[:3, 3] *= 0.001
-    new_cam_pose = new_cam_pose.flatten().tolist()
-    new_cam_meta_dict["camera_transform"] = new_cam_pose
+    # raw_cam_pose = np.array(raw_cam_meta_dict["camera_transform"]).reshape((4, 4))
+    # new_cam_pose = np.linalg.inv(raw_cam_pose)
+    # new_cam_pose[:3, 3] *= 0.001
+    # new_cam_pose = new_cam_pose.flatten().tolist()
+    # new_cam_meta_dict["camera_transform"] = new_cam_pose
     
     new_cam_meta_dict["image_height"] = new_img_height
     new_cam_meta_dict["image_width"] = new_img_width
@@ -208,11 +239,19 @@ if __name__ == "__main__":
     camera_stat_dict = {}
     for rast_view_folder, rgb_view_folder in zip(rast_view_folder_lst, rgb_view_folder_lst):
         camera_id_str = rast_view_folder
-        if camera_id_str not in meta_data_dict['camera_meta']:
+        # if camera_id_str not in meta_data_dict['camera_meta']:
+        #     print(f"WARNING camera_id_str: {camera_id_str} not in meta_data_dict['camera_meta']")
+        #     continue
+        
+        # camera_meta_dict = meta_data_dict['camera_meta'][camera_id_str]
+        camera_meta_dict = None
+        for cam_meta in meta_data_dict['camera_meta']:
+            if cam_meta['camera_id'] == camera_id_str:
+                camera_meta_dict = cam_meta
+                break
+        if camera_meta_dict is None:
             print(f"WARNING camera_id_str: {camera_id_str} not in meta_data_dict['camera_meta']")
             continue
-        
-        camera_meta_dict = meta_data_dict['camera_meta'][camera_id_str]
         # output folder
         room_id_str = camera_meta_dict['camera_room_id']
         room_output_dir = osp.join(output_dir, f'room_{room_id_str}')
@@ -242,7 +281,7 @@ if __name__ == "__main__":
                       output_dir=camera_output_dir,
                       pano_height=target_pano_height,
                       pano_width=target_pano_width, 
-                      convert_keys=['depth', 'normal', 'instance', 'semantic'])
+                      convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             room_id=int(room_id_str), 
@@ -266,9 +305,12 @@ if __name__ == "__main__":
         room_meta_dict['room_id'] = int(room_id_str)
         room_meta_dict['cameras'] =v
         for room_meta in meta_data_dict['room_meta']:
-            if room_meta['room_id'] == int(room_id_str):
-                room_meta_dict['room_type'] = room_meta['room_type']
-                room_meta_dict['room_area'] = room_meta['room_area']
+            # if room_meta['room_id'] == int(room_id_str):
+            if room_meta['id'] == int(room_id_str):
+                # room_meta_dict['room_type'] = room_meta['room_type']
+                # room_meta_dict['room_area'] = room_meta['room_area']
+                room_meta_dict['floor'] = room_meta['floor']
+                room_meta_dict['ceil'] = room_meta['ceil']
                 break
         room_output_dir = osp.join(output_dir, f'room_{room_id_str}')
         save_room_meta_path = osp.join(room_output_dir, 'room_meta.json')
