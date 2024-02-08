@@ -26,7 +26,7 @@ def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_col
         w = 1024
 
         coorx, coory = np.meshgrid(np.arange(w), np.arange(h))
-        us = np_coorx2u(coorx, w)
+        us = -np_coorx2u(coorx, w)
         vs = np_coory2v(coory, h)
 
         X = np.expand_dims(np.cos(vs) * np.sin(us), 2)

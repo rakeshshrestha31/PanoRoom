@@ -1,18 +1,25 @@
 import os
-import os.path as osp
 import sys
+sys.path.append('.')
+sys.path.append('..')
+
+import os.path as osp
+from glob import glob
 import json
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
+from typing import List, Dict
 
 from PIL import Image
-from typing import List, Dict
-import random
+import trimesh
+import open3d as o3d
 
 from e2c_lib import multi_Perspec2Equirec as m_P2E
 from pano_utils import vis_color_pointcloud
 from meta import NYU40_LABEL_TO_ADEK_COLOR
+from geometry_utils import create_spatial_quad_polygen
 
 def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.ndarray]:
     """ read koolai cubemap image
@@ -52,6 +59,9 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
         # img_list = np.array([np.repeat(np.array(img)[:,:,np.newaxis], 3, axis=2) for img in img_list])
         if image_type == 'depth':
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint16) for img in img_list])
+        elif image_type == 'semantic':
+            img_list = [decode_nyu40_semantic_image(np.asarray(img)) for img in img_list]
+            img_list = np.array(img_list)
         else:
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint8) for img in img_list])
     else:
@@ -65,13 +75,14 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
 def decode_nyu40_semantic_image(sem_image_nyu40:np.ndarray, visited:Dict=NYU40_LABEL_TO_ADEK_COLOR):
     height, width = sem_image_nyu40.shape[:2]
 
-    image_decoded = sem_image_nyu40.reshape((height, width)).astype(np.uint8)  # each pixel represent one catgory in NYU40
+    # image_decoded = sem_image_nyu40.reshape((height, width)).astype(np.uint8)  # each pixel represent one catgory in NYU40
+    image_decoded = sem_image_nyu40  # each pixel represent one catgory in NYU40
 
     unique_image = np.unique(image_decoded)
-
+    # print(f'unique_image: {unique_image}')
     for semantic in unique_image:
         if visited.get(semantic) is None:
-            print(f'semantic label index {semantic} is absent!')
+            # print(f'semantic label index {semantic} is absent!')
             visited[semantic] = np.array(
                 [random.randint(0, 256), random.randint(0, 256), random.randint(0, 256)])
 
@@ -125,9 +136,9 @@ def cube2panorama(input_dir:str,
             img = img.astype(np.uint8)
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'semantic':
-            img = decode_nyu40_semantic_image(img)
+            # img = decode_nyu40_semantic_image(img)
             img = img.astype(np.uint8)
-            print(f'{img_type}, img shape: {img.shape}')
+            # print(f'{img_type}, img shape: {img.shape}')
             # plt.imshow(img)
             # plt.show()
         img = Image.fromarray(img)
@@ -179,17 +190,17 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_id:int, new_cam_id:int, new_img
     new_cam_meta_dict["camera_position"] = {"x": raw_cam_pos[0], "y": raw_cam_pos[1], "z": raw_cam_pos[2]}
     
     # calculate camera pose w2c
-    up = np.array(raw_cam_meta_dict["camera_up"]['x'],
+    up = np.array([raw_cam_meta_dict["camera_up"]['x'],
                   raw_cam_meta_dict["camera_up"]['y'],
-                  raw_cam_meta_dict["camera_up"]['z'])
+                  raw_cam_meta_dict["camera_up"]['z']])
     up = up / np.linalg.norm(up)
     x = np.cross(look_at_dir, up)
     x = x / np.linalg.norm(x)
     z = np.cross(x, look_at_dir)
     z = z/np.linalg.norm(z)
     c2w = np.eye(4)
-    c2w[:3, 0] = x
-    c2w[:3, 1] = look_at_dir
+    c2w[:3, 0] = look_at_dir
+    c2w[:3, 1] = x
     c2w[:3, 2] = z
     c2w[:3, 3] = raw_cam_pos
     
@@ -198,8 +209,8 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_id:int, new_cam_id:int, new_img
                          [0, 1, 0, 0],
                          [0, 0, 0, 1]])
     w2c = np.linalg.inv(c2w)
-    w2c = axis_mat @ w2c
-    new_cam_meta_dict["camera_transform"] = w2c.tolist()
+    # w2c = axis_mat @ w2c
+    new_cam_meta_dict["camera_transform"] = w2c.flatten().tolist()
     
     # convert pose from w2c to c2w
     # raw_cam_pose = np.array(raw_cam_meta_dict["camera_transform"]).reshape((4, 4))
@@ -211,9 +222,63 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_id:int, new_cam_id:int, new_img
     new_cam_meta_dict["image_height"] = new_img_height
     new_cam_meta_dict["image_width"] = new_img_width
     return new_cam_meta_dict
-    
+
+def parse_room_meta(meta_data_dict:Dict, room_id_str:str, room_output_dir:str, camera_pose_w2c:np.array=None)->Dict:
+    room_meta_dict = {}
+    for room_meta in meta_data_dict['room_meta']:
+        if room_meta['id'] == room_id_str:
+            room_meta_dict['floor'] = room_meta['floor'].copy()
+            room_meta_dict['ceil'] = room_meta['ceil'].copy()
+            # # convert floor corners unit to meter
+            # for corner in room_meta_dict['floor']:
+            #     corner['start']['x'] *= 0.001
+            #     corner['start']['y'] *= 0.001
+            #     corner['start']['z'] *= 0.001
+            #     corner['end']['x'] *= 0.001
+            #     corner['end']['y'] *= 0.001
+            #     corner['end']['z'] *= 0.001
+            # for corner in room_meta_dict['ceil']:
+            #     corner['start']['x'] *= 0.001
+            #     corner['start']['y'] *= 0.001
+            #     corner['start']['z'] *= 0.001
+            #     corner['end']['x'] *= 0.001
+            #     corner['end']['y'] *= 0.001
+            #     corner['end']['z'] *= 0.001
+            break
+
+    # parse floor and veil corners
+    def parse_corners(corners:List[Dict[str, float]])->np.ndarray:
+        corner_lst = []
+        for corner in corners:
+            corner_lst.append([float(corner['start']['x']), float(corner['start']['y']), float(corner['start']['z'])])
+            corner_lst.append([float(corner['end']['x']), float(corner['end']['y']), float(corner['end']['z'])])
+        return np.array(corner_lst)
+
+    floor_points_lst = parse_corners(room_meta_dict['floor'])
+    ceil_points_lst = parse_corners(room_meta_dict['ceil'])
+    assert len(floor_points_lst) == len(ceil_points_lst)
+    assert len(floor_points_lst) % 2 == 0
+
+    quad_wall_mesh_lst = []
+    for i in range(len(floor_points_lst)//2):
+        floor_corner_i = floor_points_lst[i*2]
+        floor_corner_j = floor_points_lst[i*2+1]
+        ceil_corner_i = ceil_points_lst[i*2]
+        ceil_corner_j = ceil_points_lst[i*2+1]
+        # 3D coordinate for each wall
+        quad_corners = np.array([floor_corner_i, ceil_corner_i, ceil_corner_j, floor_corner_j]) * 0.001
+        # transform world point to camera point
+        if camera_pose_w2c is not None:
+            quad_corners = (camera_pose_w2c[:3, :3] @ quad_corners.T).T + camera_pose_w2c[:3, 3]
+        wall_mesh = create_spatial_quad_polygen(quad_corners)
+        quad_wall_mesh_lst.append(wall_mesh)
+
+    quad_wall_mesh = trimesh.util.concatenate(quad_wall_mesh_lst)
+    quad_wall_mesh.export(osp.join(room_output_dir, 'room_wall.ply'))
+    return room_meta_dict
+        
 if __name__ == "__main__":
-    parser = ArgumentParser()
+    parser = ArgumentParser(description="Preprocess single scene data from koolai synthetic dataset")
     parser.add_argument("--input_dir", type=str, required=True, help='input folder of koolai synthetic dataset')
     parser.add_argument("--output_dir", type=str, required=True, help='processed output folder')
     args = parser.parse_args()
@@ -221,9 +286,9 @@ if __name__ == "__main__":
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
     
-    rasterize_dir = osp.join(input_root_dir, 'rasterize')
-    rgb_dir = osp.join(input_root_dir, 'render')
-    structure_json_path = osp.join(input_root_dir, 'structure/user_output.json')
+    rasterize_dir = glob(osp.join(input_root_dir, '*_rasterize'))[0]
+    rgb_dir = glob(osp.join(input_root_dir, '*_render'))[0]
+    structure_json_path = glob(osp.join(input_root_dir, '*_structure/user_output.json'))[0]
     
     rast_view_folder_lst = [f for f in os.listdir(rasterize_dir) if osp.isdir(osp.join(rasterize_dir, f)) and (f.split('_')[-1]).isdigit()]
     rgb_view_folder_lst = [f for f in os.listdir(rgb_dir) if osp.isdir(osp.join(rgb_dir, f)) and (f.split('_')[-1]).isdigit()]
@@ -268,20 +333,25 @@ if __name__ == "__main__":
             continue
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
         camera_output_dir = osp.join(room_output_dir, f'{new_cam_id_in_room}')
-        os.makedirs(camera_output_dir, exist_ok=True)
         
         target_pano_height, target_pano_width = 512, 1024
-        # copy rgb image
-        raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
-        rgb_img = Image.open(raw_rgb_img_path).resize((target_pano_width, target_pano_height))
-        rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+        if True:
+            # copy rgb image
+            raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
+            rgb_img = Image.open(raw_rgb_img_path).resize((target_pano_width, target_pano_height))
+            if np.isnan(np.array(rgb_img).any()) or len(np.array(rgb_img)[np.array(rgb_img) > 0]) == 0:
+                print(f"WARNING: {raw_rgb_img_path} is empty!!")
+                continue
+            
+            os.makedirs(camera_output_dir, exist_ok=True)
+            rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
         
         # convert cubemap to panorama, and copy rgb panroama
-        cube2panorama(input_dir=rast_view_folder, 
-                      output_dir=camera_output_dir,
-                      pano_height=target_pano_height,
-                      pano_width=target_pano_width, 
-                      convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
+            cube2panorama(input_dir=rast_view_folder, 
+                        output_dir=camera_output_dir,
+                        pano_height=target_pano_height,
+                        pano_width=target_pano_width, 
+                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             room_id=int(room_id_str), 
@@ -291,27 +361,32 @@ if __name__ == "__main__":
         camera_stat_dict[room_id_str].append({new_cam_id_in_room: new_cam_meta_idct})
         
         # check depth
-        rgb_img_filepath = osp.join(camera_output_dir, 'rgb.png')
-        depth_img_filepath = osp.join(camera_output_dir, 'depth.png')
-        saved_color_pcl_filepath = osp.join(camera_output_dir, 'points3d.ply')
-        vis_color_pointcloud(rgb_img_filepath, depth_img_filepath, saved_color_pcl_filepath, depth_scale=4000.0, normaliz=False)
+        if True:
+            rgb_img_filepath = osp.join(camera_output_dir, 'rgb.png')
+            depth_img_filepath = osp.join(camera_output_dir, 'depth.png')
+            saved_color_pcl_filepath = osp.join(camera_output_dir, 'points3d.ply')
+            vis_color_pointcloud(rgb_img_filepath, depth_img_filepath, saved_color_pcl_filepath, depth_scale=4000.0, normaliz=False)
         
+        # generate room layout mesh in camera space
+        cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+        cam_pos = np.array([new_cam_meta_idct["camera_position"]["x"], 
+                            new_cam_meta_idct["camera_position"]["y"], 
+                            new_cam_meta_idct["camera_position"]["z"]]) 
+        parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
+        # transform point cloud from camera space to world space
+        pcd = o3d.io.read_point_cloud(saved_color_pcl_filepath)
+        pcd.transform(np.linalg.inv(cam_pose_w2c))
+        o3d.io.write_point_cloud(osp.join(camera_output_dir, 'w_points3d.ply'), pcd)
         print(f"---------------- process room {room_id_str} camera {new_cam_id_in_room} ----------------")
     
     # save camera meta data in each room
     for k, v in camera_stat_dict.items():
         room_id_str = k
-        room_meta_dict = {}
-        room_meta_dict['room_id'] = int(room_id_str)
-        room_meta_dict['cameras'] =v
-        for room_meta in meta_data_dict['room_meta']:
-            # if room_meta['room_id'] == int(room_id_str):
-            if room_meta['id'] == int(room_id_str):
-                # room_meta_dict['room_type'] = room_meta['room_type']
-                # room_meta_dict['room_area'] = room_meta['room_area']
-                room_meta_dict['floor'] = room_meta['floor']
-                room_meta_dict['ceil'] = room_meta['ceil']
-                break
         room_output_dir = osp.join(output_dir, f'room_{room_id_str}')
+        
+        # room_meta_dict = {}
+        room_meta_dict = parse_room_meta(meta_data_dict, room_id_str, room_output_dir)
+        room_meta_dict['room_id'] = int(room_id_str)
+        room_meta_dict['cameras'] = v
         save_room_meta_path = osp.join(room_output_dir, 'room_meta.json')
         json.dump(room_meta_dict, open(save_room_meta_path, 'w'), indent=4)
