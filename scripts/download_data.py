@@ -3,12 +3,12 @@ import pandas as pd
 import requests
 import shutil
 
-def download_from_csv(csv_filename:str, meta_folderpath:str)->int:
+def download_from_csv(csv_filename:str, meta_folderpath:str, output_dir:str)->int:
     # Load the content of the CSV file
     content = pd.read_csv(csv_filename, delimiter=',')
     print(f'Content: {content}')
     
-    output_dir = os.path.dirname(csv_filename)
+    # output_dir = os.path.dirname(csv_filename)
     meta_folders = [f for f in os.listdir(meta_folderpath) if f.isdigit()]
     # Parse the content and download the data
     for result, wid in zip(content['result'], content['world_id']):
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default='', help='The directory to save the downloaded files')
     args = parser.parse_args()
     
-    scene_num = download_from_csv(args.koolai_csv_filepath)
+    scene_num = download_from_csv(args.koolai_csv_filepath, meta_folderpath=args.koolai_room_ins_folderpath, output_dir=args.output_dir)
     print(f'Downloaded {scene_num} scenes from {args.koolai_csv_filepath} to {args.output_dir}')
     
     

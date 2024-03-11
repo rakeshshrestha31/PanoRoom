@@ -373,10 +373,11 @@ if __name__ == "__main__":
                             new_cam_meta_idct["camera_position"]["y"], 
                             new_cam_meta_idct["camera_position"]["z"]]) 
         parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
-        # transform point cloud from camera space to world space
-        pcd = o3d.io.read_point_cloud(saved_color_pcl_filepath)
-        pcd.transform(np.linalg.inv(cam_pose_w2c))
-        o3d.io.write_point_cloud(osp.join(camera_output_dir, 'w_points3d.ply'), pcd)
+        if True:
+            # transform point cloud from camera space to world space
+            pcd = o3d.io.read_point_cloud(saved_color_pcl_filepath)
+            pcd.transform(np.linalg.inv(cam_pose_w2c))
+            o3d.io.write_point_cloud(osp.join(camera_output_dir, 'w_points3d.ply'), pcd)
         print(f"---------------- process room {room_id_str} camera {new_cam_id_in_room} ----------------")
     
     # save camera meta data in each room
