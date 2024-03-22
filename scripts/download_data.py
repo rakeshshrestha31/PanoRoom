@@ -45,8 +45,11 @@ def download_from_csv(csv_filename:str, meta_folderpath:str, output_dir:str)->in
 
                 # Save the downloaded file
                 save_path = os.path.join(output_folder, f'{wid}_{file_key}.zip')
+                unzip_dir = os.path.join(output_folder, f'{wid}_{file_key}')
+                if os.path.exists(unzip_dir) and len(os.listdir(unzip_dir)) > 0:
+                    continue
                 zip_files.append(save_path)
-                unzip_dirs.append(os.path.join(output_folder, f'{wid}_{file_key}'))
+                unzip_dirs.append(unzip_dir)
                 with open(save_path, 'wb') as output_file:
                     output_file.write(response.content)
         
