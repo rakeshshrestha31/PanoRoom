@@ -28,7 +28,7 @@ if __name__=='__main__':
     # downlaod the data
     download_exe = 'download_data.py'
     cmd = f'python {download_exe} --koolai_csv_filepath {csv_file} --koolai_room_ins_folderpath {room_meta_folder} --output_dir {args.output_dir}'
-    # os.system(cmd)
+    os.system(cmd)
     
     # process the data
     process_exe = 'preprocess_koolai_data.py'

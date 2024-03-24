@@ -293,6 +293,16 @@ def parse_single_scene(input_root_dir:str, output_dir:str) -> int:
         print(f"WARNING: {input_root_dir} is empty")
         return 0, 0
     
+    print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
+    if os.path.exists(output_dir):
+        room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+        num_rooms = len(room_folders)
+        if num_rooms > 0:
+            num_cams = sum([len(next(os.walk(room_folder))[1]) for room_folder in room_folders])
+            return num_rooms, num_cams
+    else:
+        os.makedirs(output_dir)
+
     rasterize_dir = rasterize_dirs[0]
     rgb_dir = rgb_dirs[0]
     structure_json_path = structure_json_paths[0]
@@ -369,14 +379,13 @@ def parse_single_scene(input_root_dir:str, output_dir:str) -> int:
         camera_stat_dict[room_id_str].append({new_cam_id_in_room: new_cam_meta_idct})
         
         # generate room layout mesh in camera space
-        cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
-        room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
-        if len(room_layout_dict) == 0:
-            print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
+        # cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+        # room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
+        # if len(room_layout_dict) == 0:
+        #     print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
 
-        # end_tms = time.time()
-        # print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
-    print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
+        end_tms = time.time()
+        print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
     
     # save camera meta data in each room
     for k, v in camera_stat_dict.items():
