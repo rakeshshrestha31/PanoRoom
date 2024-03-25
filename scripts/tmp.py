@@ -1,4 +1,5 @@
 from collections import defaultdict
+from copy import deepcopy
 import sys
 import json
 from pathlib import Path
@@ -16,6 +17,11 @@ from transforms3d import utils, axangles
 
 from geometry_utils import create_spatial_quad_polygen
 from scripts.preprocess_koolai_data import parse_user_output, adjust_cam_meta, parse_room_meta
+
+
+SCALE = 0.001
+SCALE_MAT = np.eye(4)
+SCALE_MAT[range(3), range(3)] = SCALE
 
 
 def getCameraT(camera_meta_dict):
@@ -66,7 +72,7 @@ def get_room_lineset(room_meta_dict: Dict[str, List[Dict[str, float]]]) -> o3d.g
     return lineset
 
 
-def filter_obbs(obbs, room_meta):
+def get_room_bounds(room_meta):
     room_corners = []
     inds = []
     for point in room_meta['edge']:
@@ -75,14 +81,7 @@ def filter_obbs(obbs, room_meta):
     room_corners = np.array(room_corners)
     bbox_min = np.min(room_corners, axis=0)
     bbox_max = np.max(room_corners, axis=0)
-
-    obbs_filtered = []
-    for i, obb in enumerate(obbs):
-        center = obb.center
-        if bbox_min[0] < center[0] < bbox_max[0] and bbox_min[1] < center[1] < bbox_max[1] and bbox_min[2] < center[2] < bbox_max[2]:
-            obbs_filtered.append(obb)
-            inds.append(i)
-    return obbs_filtered, inds
+    return bbox_min, bbox_max
 
 
 def interpolate_line(p1, p2, num=30):
@@ -153,9 +152,12 @@ def cam3d2pix(cam3d, width, height):
     return campix
 
 
-def obbs_to_pix(obbs, width, height, fov=None, num=300):
+def obbs_to_pix(bboxes, width, height, fov=None, num=300):
     cam3d = []
-    for obb in obbs:
+    for bbox in bboxes:
+        T = np.array(bbox["transform"]).reshape(4, 4)
+        size = np.array(bbox["size"])
+        obb = o3d.geometry.OrientedBoundingBox(T[:3, 3:4], T[:3, :3], size)
         points = obb.get_box_points()
         box_lines = [
             [0, 1], [1, 7], [7, 2], [2, 0],
@@ -187,14 +189,6 @@ def obbs_to_pix(obbs, width, height, fov=None, num=300):
     return pix
 
 
-def obbs_to_mesh(obbs):
-    mesh = o3d.geometry.TriangleMesh()
-    for obb in obbs:
-        mesh += o3d.geometry.TriangleMesh.create_from_oriented_bounding_box(obb)
-    mesh = mesh.paint_uniform_color([0.5, 0.5, 0.5])
-    return mesh
-
-
 scene_folderpath = Path("/mnt/Exp/rakesh/LRM_pano/20240229_data/3FO4K5GA97T0/")
 ins_meta_file = scene_folderpath / "ins_meta.json"
 structure_json_path = next(scene_folderpath.glob("*_structure/user_output.json"))
@@ -212,26 +206,25 @@ obbs = []
 for bbox in ins_meta:
     T = np.array(bbox["transform"]).reshape(4, 4)
     size = np.array(bbox["size"])
-    obb = o3d.geometry.OrientedBoundingBox(T[:3, 3:4], T[:3, :3], size)
+    obb = trimesh.creation.box(extents=size, transform=T)
     obbs.append(obb)
 
-mesh = obbs_to_mesh(obbs)
-o3d.io.write_triangle_mesh(f'/tmp/bbox_all.ply', mesh)
-
-# correct flipped normals
-mesh = trimesh.load_mesh(f'/tmp/bbox_all.ply')
-trimesh.repair.fix_normals(mesh, multibody=True)
-mesh.export(f'/tmp/bbox_all.ply')
+obbs = trimesh.util.concatenate(obbs)
+obbs.apply_transform(SCALE_MAT)
+obbs.export(f'/tmp/bbox_all.ply')
 
 meta_data_dict = parse_user_output(structure_json_path)
 
 room_meta_dict = {}
 for room_meta in meta_data_dict['room_meta']:
     lineset = get_room_lineset(room_meta)
+    room_meta['lineset'] = lineset
     room_id_str = room_meta['id']
     room_meta_dict[room_id_str] = room_meta
+    lineset = lineset.scale(SCALE, center=(0, 0, 0))
     o3d.io.write_line_set(f'/tmp/walls_{room_id_str}.ply', lineset)
 
+# kool: x left, y forward, z up
 R_cv_kool = np.array([
     -1, 0, 0,
     0, 0, -1,
@@ -239,19 +232,24 @@ R_cv_kool = np.array([
 ]).reshape((3, 3))
 R_kool_cv = R_cv_kool.T
 
-R_cv_gl = np.array([
-    1, 0, 0,
-    0, -1, 0,
-    0, 0, -1
+# WSU: West (left), South (back), Up coordinate system
+R_cv_wsu = np.array([
+    -1, 0, 0,
+    0, 0, -1,
+    0, -1, 0
 ]).reshape((3, 3))
+R_wsu_cv = R_cv_wsu.T
+T_wsu_cv = np.eye(4)
+T_wsu_cv[:3, :3] = R_wsu_cv
 
 camera_stat_dict = defaultdict(list)
 
 for camera_meta_dict in meta_data_dict['camera_meta']:
     camera_id_str = camera_meta_dict['camera_id']
-
     room_id_str = camera_meta_dict['camera_room_id']
     room_meta = room_meta_dict[room_id_str]
+
+    print(f'Processing camera {camera_id_str} in room {room_id_str}')
 
     new_cam_id_in_room = len(camera_stat_dict[room_id_str])
     room_output_dir = osp.join(output_dir, f'room_{room_id_str}')
@@ -266,30 +264,51 @@ for camera_meta_dict in meta_data_dict['camera_meta']:
                                         new_img_height=target_pano_height,
                                         new_img_width=target_pano_width)
     camera_stat_dict[room_id_str].append({new_cam_id_in_room: new_cam_meta_idct})
-    # T_cw = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
-    # T_wc = np.linalg.inv(T_cw)
-    # T_wc[:3, 3] = T_wc[:3, 3] * 1000.0
 
-    T_wc = getCameraT(camera_meta_dict)
-    T_wc[:3, :3] = T_wc[:3, :3] @ R_kool_cv  # @ R_cv_gl
+    T_cw = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+    T_wc = np.linalg.inv(T_cw)
+    T_wc[:3, 3] = T_wc[:3, 3]
+    T_wc[:3, :3] = T_wc[:3, :3] @ R_wsu_cv
     T_cw = np.linalg.inv(T_wc)
 
-    mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1000.0).transform(T_wc)
+    # T_wc = getCameraT(camera_meta_dict)
+    # T_wc[:3, :3] = T_wc[:3, :3] @ R_kool_cv
+    # T_wc[:3, 3] = T_wc[:3, 3] * SCALE
+    # T_cw = np.linalg.inv(T_wc)
+
+    mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1).transform(T_wc)
     o3d.io.write_triangle_mesh(f'/tmp/camera_{camera_id_str}.ply', mesh)
 
-    room_obbs, room_obb_inds = filter_obbs(obbs, room_meta)
-    mesh = obbs_to_mesh(room_obbs)
-    o3d.io.write_triangle_mesh(f'/tmp/bbox_room_{room_id_str}.ply', mesh)
-
+    room_min, room_max = get_room_bounds(room_meta)
     room_obbs = []
-    for bbox in [ins_meta[i] for i in room_obb_inds]:
+    room_bboxes = []
+    for bbox in ins_meta:
         T = np.array(bbox["transform"]).reshape(4, 4)
-        size = np.array(bbox["size"])
-        T = T_cw @ T
-        obb = o3d.geometry.OrientedBoundingBox(T[:3, 3:4], T[:3, :3], size)
-        room_obbs.append(obb)
-    mesh = obbs_to_mesh(room_obbs)
-    o3d.io.write_triangle_mesh(f'/tmp/bbox_room_cam_{room_id_str}.ply', mesh)
+        center = T[:3, 3]
+        if (
+            room_min[0] < center[0] < room_max[0]
+            and room_min[1] < center[1] < room_max[1]
+            and room_min[2] < center[2] < room_max[2]
+        ):
+            size = np.array(bbox["size"]) * SCALE
+            T[:3, 3] = T[:3, 3] * SCALE
+            obb = trimesh.creation.box(extents=size, transform=T)
+            room_obbs.append(obb)
+
+            bbox = deepcopy(bbox)
+            bbox["transform"] = T_cw @ T
+            bbox["size"] = size
+            room_bboxes.append(bbox)
+
+    room_obbs = trimesh.util.concatenate(room_obbs)
+    room_obbs.export(f'/tmp/bbox_room_{camera_id_str}.ply')
+
+    room_obbs.apply_transform(T_wsu_cv @ T_cw)
+    room_obbs.export(f'/tmp/bbox_room_cam_{camera_id_str}.ply')
+
+    lineset = deepcopy(room_meta['lineset'])
+    lineset = lineset.transform(T_wsu_cv @ T_cw)
+    o3d.io.write_line_set(f'/tmp/walls_cam_{camera_id_str}.ply', lineset)
 
     # img_path = osp.join(render_path, camera_id_str, "cubic.jpg")
     img_path = osp.join(camera_output_dir, 'rgb.png')
@@ -299,13 +318,12 @@ for camera_meta_dict in meta_data_dict['camera_meta']:
     # fov = 90
 
     img = np.array(Image.open(img_path))
-    pixs = obbs_to_pix(room_obbs, img.shape[1], img.shape[0], fov=fov)
+    pixs = obbs_to_pix(room_bboxes, img.shape[1], img.shape[0], fov=fov)
     img[pixs[:, 1], pixs[:, 0]] = [255, 0, 0]
 
     img_path = osp.join(camera_output_dir, 'rgb_debug.png')
     Image.fromarray(img).save(img_path)
-    print(img_path)
 
-    # img_path = osp.join('/tmp/rgb_debug.png')
+    # img_path = osp.join(f'/tmp/rgb_debug_{camera_id_str}.png')
     # Image.fromarray(img).save(img_path)
     # break
