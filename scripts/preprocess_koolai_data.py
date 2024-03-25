@@ -188,22 +188,22 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_id:int, new_cam_id:int, new_img
     new_cam_meta_dict["camera_forward"] = {"x": look_at_dir[0], "y": look_at_dir[1], "z": look_at_dir[2]}
 
     new_cam_meta_dict["camera_position"] = {"x": raw_cam_pos[0], "y": raw_cam_pos[1], "z": raw_cam_pos[2]}
-    
-    # calculate camera pose w2c
+
+    # calculate camera pose w2c (in WSU: West (left), South (back), Up coordinate system)
     up = np.array([raw_cam_meta_dict["camera_up"]['x'],
                   raw_cam_meta_dict["camera_up"]['y'],
                   raw_cam_meta_dict["camera_up"]['z']])
     up = up / np.linalg.norm(up)
-    x = np.cross(look_at_dir, up)
-    x = x / np.linalg.norm(x)
-    z = np.cross(x, look_at_dir)
+    y = np.cross(up, look_at_dir)
+    y = y / np.linalg.norm(y)
+    z = np.cross(look_at_dir, y)
     z = z/np.linalg.norm(z)
     c2w = np.eye(4)
     c2w[:3, 0] = look_at_dir
-    c2w[:3, 1] = x
+    c2w[:3, 1] = y
     c2w[:3, 2] = z
     c2w[:3, 3] = raw_cam_pos
-    
+
     axis_mat = np.array([[1, 0, 0, 0],
                          [0, 0, -1, 0],
                          [0, 1, 0, 0],
