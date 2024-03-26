@@ -249,24 +249,17 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, instance_meta:List, room_id:int, new
     new_cam_meta_dict["image_width"] = new_img_width
 
     bboxes = []
-    bboxes_global = []
     for bbox in instance_meta:
         T = np.array(bbox["transform"]).reshape(4, 4)
         T[:3, 3] = T[:3, 3] * SCALE
+        T = w2c @ T
         size = np.array(bbox["size"]) * SCALE
 
         bbox = deepcopy(bbox)
         bbox["transform"] = T.flatten().tolist()
         bbox["size"] = size.tolist()
-        bboxes_global.append(bbox)
-
-        T = w2c @ T
-        bbox = deepcopy(bbox)
-        bbox["transform"] = T.flatten().tolist()
-        bbox["size"] = size.tolist()
         bboxes.append(bbox)
 
-    new_cam_meta_dict["bboxes_global"] = bboxes_global
     new_cam_meta_dict["bboxes"] = bboxes
 
     return new_cam_meta_dict
@@ -469,11 +462,12 @@ def obbs_to_pix(bboxes, width, height, fov=None, num=300):
     return pix
 
 
-def bboxes_to_trimesh(bboxes):
+def bboxes_to_trimesh(bboxes, scale=1.0):
     obbs = []
     for bbox in bboxes:
         T = np.array(bbox["transform"]).reshape(4, 4)
-        size = np.array(bbox["size"])
+        T[:3, 3] = T[:3, 3] * scale
+        size = np.array(bbox["size"]) * scale
         obb = trimesh.creation.box(extents=size, transform=T)
         obbs.append(obb)
     obbs = trimesh.util.concatenate(obbs)
@@ -604,7 +598,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes.ply'))
 
-            obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes_global"])
+            obbs = bboxes_to_trimesh(meta_data_dict['instance_meta'], scale=SCALE)
             pose_trimesh = trimesh.creation.axis(**axis_kwargs)
             pose_trimesh.apply_transform(cam_pose_c2w)
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
