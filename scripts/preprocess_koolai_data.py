@@ -249,17 +249,24 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, instance_meta:List, room_id:int, new
     new_cam_meta_dict["image_width"] = new_img_width
 
     bboxes = []
+    bboxes_global = []
     for bbox in instance_meta:
         T = np.array(bbox["transform"]).reshape(4, 4)
         T[:3, 3] = T[:3, 3] * SCALE
-        T = w2c @ T
         size = np.array(bbox["size"]) * SCALE
 
         bbox = deepcopy(bbox)
         bbox["transform"] = T.flatten().tolist()
         bbox["size"] = size.tolist()
+        bboxes_global.append(bbox)
+
+        T = w2c @ T
+        bbox = deepcopy(bbox)
+        bbox["transform"] = T.flatten().tolist()
+        bbox["size"] = size.tolist()
         bboxes.append(bbox)
 
+    new_cam_meta_dict["bboxes_global"] = bboxes_global
     new_cam_meta_dict["bboxes"] = bboxes
 
     return new_cam_meta_dict
@@ -462,6 +469,17 @@ def obbs_to_pix(bboxes, width, height, fov=None, num=300):
     return pix
 
 
+def bboxes_to_trimesh(bboxes):
+    obbs = []
+    for bbox in bboxes:
+        T = np.array(bbox["transform"]).reshape(4, 4)
+        size = np.array(bbox["size"])
+        obb = trimesh.creation.box(extents=size, transform=T)
+        obbs.append(obb)
+    obbs = trimesh.util.concatenate(obbs)
+    return obbs
+
+
 import time
 def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) -> int:
     """ parse a single scene, split into multiple rooms
@@ -569,6 +587,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         if debug:
             # generate room layout mesh in camera space
             cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+            cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
             room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
             if len(room_layout_dict) == 0:
                 print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
@@ -579,14 +598,17 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             rgb_img[pixs[:, 1], pixs[:, 0]] = [255, 0, 0]
             Image.fromarray(rgb_img).save(osp.join(camera_output_dir, 'rgb_bbox.png'))
 
-            obbs = []
-            for bbox in new_cam_meta_idct["bboxes"]:
-                T = np.array(bbox["transform"]).reshape(4, 4)
-                size = np.array(bbox["size"])
-                obb = trimesh.creation.box(extents=size, transform=T)
-                obbs.append(obb)
-            obbs = trimesh.util.concatenate(obbs)
+            axis_kwargs = {"origin_size": 0.01, "axis_radius": 0.05, "axis_length": 1.0}
+            obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes"])
+            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes.ply'))
+
+            obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes_global"])
+            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            pose_trimesh.apply_transform(cam_pose_c2w)
+            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
