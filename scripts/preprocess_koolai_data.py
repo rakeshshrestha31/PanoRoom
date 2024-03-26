@@ -15,6 +15,7 @@ from copy import deepcopy
 
 import torch
 
+import cv2
 from PIL import Image
 import trimesh
 import open3d as o3d
@@ -83,6 +84,8 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
         elif image_type == 'semantic':
             img_list = [decode_nyu40_semantic_image(np.asarray(img)) for img in img_list]
             img_list = np.array(img_list)
+        elif image_type == 'instance':
+            img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.int32) for img in img_list])
         else:
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint8) for img in img_list])
     else:
@@ -146,15 +149,25 @@ def cube2panorama(input_dir:str,
     for img_type, img_path in zip(convert_keys, convert_images_path_lst):
         faces_img_lst = read_koolai_cubemap_image(img_path, img_type)
         img_channel = faces_img_lst[0].shape[-1]
-        per = m_P2E.Perspective(faces_img_lst, F_P_T_lst, channel=img_channel)
-        img = per.GetEquirec(pano_height, pano_width)
+
+        kwargs = {}
+        if img_type in ['semantic', 'instance']:
+            kwargs['interpolation'] = cv2.INTER_NEAREST
+            kwargs['average'] = False
+        else:
+            kwargs['interpolation'] = cv2.INTER_CUBIC
+            kwargs['average'] = True
+
+        per = m_P2E.Perspective(faces_img_lst, F_P_T_lst, channel=img_channel, **kwargs)
+        img, mask = per.GetEquirec(pano_height, pano_width)
         if img_type == 'depth':
             img = (img*4).astype(np.uint16)
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'albedo' or img_type == 'normal':
             img = img.astype(np.uint8)
         elif img_type == 'instance':
-            img = img.astype(np.uint8)
+            img = img.astype(np.int32)
+            img = np.where(mask > 0, img, -1)
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'semantic':
             # img = decode_nyu40_semantic_image(img)

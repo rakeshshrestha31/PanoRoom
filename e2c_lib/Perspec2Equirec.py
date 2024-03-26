@@ -4,7 +4,10 @@ import cv2
 import numpy as np
 
 class Perspective:
-    def __init__(self, image:np.array , FOV:float, PHI:float, THETA:float, channel=3):
+    def __init__(
+        self, image:np.array, FOV:float, PHI:float, THETA:float, channel=3,
+        interpolation=cv2.INTER_CUBIC
+    ):
         # self._img = cv2.imread(img_name, cv2.IMREAD_COLOR)
         self._img = image
         [self._height, self._width, c] = self._img.shape
@@ -17,6 +20,7 @@ class Perspective:
         self.w_len = np.tan(np.radians(self.wFOV / 2.0))
         self.h_len = np.tan(np.radians(self.hFOV / 2.0))
         self.channel = channel
+        self.interpolation = interpolation
         assert self.channel == c
 
     
@@ -75,7 +79,7 @@ class Perspective:
         mask = np.where((-self.w_len < xyz[:,:,0]) & (xyz[:,:,0] < self.w_len) &
                         (-self.h_len < xyz[:,:,2]) & (xyz[:,:,2] < self.h_len), 1, 0)
 
-        persp = cv2.remap(self._img, lon_map.astype(np.float32), lat_map.astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        persp = cv2.remap(self._img, lon_map.astype(np.float32), lat_map.astype(np.float32), self.interpolation, borderMode=cv2.BORDER_REPLICATE)
         
         mask = mask * inverse_mask
         mask = np.repeat(mask[:, :, np.newaxis], self.channel, axis=2)
