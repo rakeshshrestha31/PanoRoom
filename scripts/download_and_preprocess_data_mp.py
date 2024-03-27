@@ -29,7 +29,7 @@ if __name__=='__main__':
     # downlaod the data
     download_exe = 'download_data.py'
     cmd = f'python {download_exe} --koolai_csv_filepath {csv_file} --koolai_room_ins_folderpath {room_meta_folder} --output_dir {args.output_dir}'
-    # os.system(cmd)
+    os.system(cmd)
     
     # process the data
     scene_folders_lst = [f for f in os.listdir(args.output_dir) if os.path.isdir(os.path.join(args.output_dir, f))]

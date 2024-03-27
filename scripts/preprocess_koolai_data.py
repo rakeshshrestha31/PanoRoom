@@ -122,7 +122,8 @@ def cube2panorama(input_dir:str,
                   output_dir:str, 
                   pano_width:int=1024, 
                   pano_height:int=512, 
-                  convert_keys:List[str]=['albedo', 'depth', 'normal', 'instance', 'semantic']):
+                  convert_keys:List[str]=['albedo', 'depth', 'normal', 'instance', 'semantic'],
+                  camera_id:int=0):
     """ convert cubemap images to panorama image
 
     Args:
@@ -134,6 +135,18 @@ def cube2panorama(input_dir:str,
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+    
+    depth_dir = osp.join(output_dir, 'depth')
+    albedo_dir = osp.join(output_dir, 'albedo')
+    normal_dir = osp.join(output_dir, 'normal')
+    instance_dir = osp.join(output_dir, 'instance')
+    semantic_dir = osp.join(output_dir, 'semantic')
+    
+    os.makedirs(depth_dir, exist_ok=True)
+    os.makedirs(albedo_dir, exist_ok=True)
+    os.makedirs(normal_dir, exist_ok=True)
+    os.makedirs(instance_dir, exist_ok=True)
+    os.makedirs(semantic_dir, exist_ok=True)
     
     convert_images_path_lst = []
     for key in convert_keys:
@@ -176,7 +189,8 @@ def cube2panorama(input_dir:str,
             # plt.imshow(img)
             # plt.show()
         img = Image.fromarray(img)
-        img.save(osp.join(output_dir, osp.basename(img_path)))
+        # img.save(osp.join(output_dir, osp.basename(img_path)))
+        img.save(osp.join(output_dir, img_type, f'{camera_id}.png'))
     
     
 def parse_user_output(structure_json_path:str)->dict:
@@ -475,6 +489,18 @@ def obbs_to_pix(bboxes, width, height, fov=None, num=300):
     return pix
 
 
+def bboxes_to_trimesh(bboxes, scale=1.0):
+    obbs = []
+    for bbox in bboxes:
+        T = np.array(bbox["transform"]).reshape(4, 4)
+        T[:3, 3] = T[:3, 3] * scale
+        size = np.array(bbox["size"]) * scale
+        obb = trimesh.creation.box(extents=size, transform=T)
+        obbs.append(obb)
+    obbs = trimesh.util.concatenate(obbs)
+    return obbs
+
+
 import time
 def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) -> int:
     """ parse a single scene, split into multiple rooms
@@ -498,7 +524,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
         num_rooms = len(room_folders)
         if num_rooms > 0:
-            num_cams = sum([len(next(os.walk(room_folder))[1]) for room_folder in room_folders])
+            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
             return num_rooms, num_cams
     else:
         os.makedirs(output_dir)
@@ -548,6 +574,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
 
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
         camera_output_dir = osp.join(room_output_dir, f'{new_cam_id_in_room}')
+        rgb_img_dir = osp.join(room_output_dir, 'rgb')
         
         target_pano_height, target_pano_width = 512, 1024
         if True:
@@ -561,15 +588,19 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                 print(f"WARNING: {raw_rgb_img_path} is empty!!")
                 continue
             
-            os.makedirs(camera_output_dir, exist_ok=True)
-            rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+            # os.makedirs(camera_output_dir, exist_ok=True)
+            # rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+            os.makedirs(rgb_img_dir, exist_ok=True)
+            rgb_img.save(osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png'))
         
         # convert cubemap to panorama, and copy rgb panroama
             cube2panorama(input_dir=rast_view_folder, 
-                        output_dir=camera_output_dir,
+                        # output_dir=camera_output_dir,
+                        output_dir=room_output_dir,
                         pano_height=target_pano_height,
                         pano_width=target_pano_width, 
-                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
+                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'],
+                        camera_id=new_cam_id_in_room,)
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             instance_meta=meta_data_dict['instance_meta'],
@@ -582,6 +613,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         if debug:
             # generate room layout mesh in camera space
             cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+            cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
             room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
             if len(room_layout_dict) == 0:
                 print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
@@ -592,14 +624,17 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             rgb_img[pixs[:, 1], pixs[:, 0]] = [255, 0, 0]
             Image.fromarray(rgb_img).save(osp.join(camera_output_dir, 'rgb_bbox.png'))
 
-            obbs = []
-            for bbox in new_cam_meta_idct["bboxes"]:
-                T = np.array(bbox["transform"]).reshape(4, 4)
-                size = np.array(bbox["size"])
-                obb = trimesh.creation.box(extents=size, transform=T)
-                obbs.append(obb)
-            obbs = trimesh.util.concatenate(obbs)
+            axis_kwargs = {"origin_size": 0.01, "axis_radius": 0.05, "axis_length": 1.0}
+            obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes"])
+            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes.ply'))
+
+            obbs = bboxes_to_trimesh(meta_data_dict['instance_meta'], scale=SCALE)
+            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            pose_trimesh.apply_transform(cam_pose_c2w)
+            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
