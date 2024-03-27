@@ -119,7 +119,8 @@ def cube2panorama(input_dir:str,
                   output_dir:str, 
                   pano_width:int=1024, 
                   pano_height:int=512, 
-                  convert_keys:List[str]=['albedo', 'depth', 'normal', 'instance', 'semantic']):
+                  convert_keys:List[str]=['albedo', 'depth', 'normal', 'instance', 'semantic'],
+                  camera_id:int=0):
     """ convert cubemap images to panorama image
 
     Args:
@@ -131,6 +132,18 @@ def cube2panorama(input_dir:str,
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+    
+    depth_dir = osp.join(output_dir, 'depth')
+    albedo_dir = osp.join(output_dir, 'albedo')
+    normal_dir = osp.join(output_dir, 'normal')
+    instance_dir = osp.join(output_dir, 'instance')
+    semantic_dir = osp.join(output_dir, 'semantic')
+    
+    os.makedirs(depth_dir, exist_ok=True)
+    os.makedirs(albedo_dir, exist_ok=True)
+    os.makedirs(normal_dir, exist_ok=True)
+    os.makedirs(instance_dir, exist_ok=True)
+    os.makedirs(semantic_dir, exist_ok=True)
     
     convert_images_path_lst = []
     for key in convert_keys:
@@ -163,7 +176,8 @@ def cube2panorama(input_dir:str,
             # plt.imshow(img)
             # plt.show()
         img = Image.fromarray(img)
-        img.save(osp.join(output_dir, osp.basename(img_path)))
+        # img.save(osp.join(output_dir, osp.basename(img_path)))
+        img.save(osp.join(output_dir, img_type, f'{camera_id}.png'))
     
     
 def parse_user_output(structure_json_path:str)->dict:
@@ -497,7 +511,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
         num_rooms = len(room_folders)
         if num_rooms > 0:
-            num_cams = sum([len(next(os.walk(room_folder))[1]) for room_folder in room_folders])
+            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
             return num_rooms, num_cams
     else:
         os.makedirs(output_dir)
@@ -547,6 +561,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
 
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
         camera_output_dir = osp.join(room_output_dir, f'{new_cam_id_in_room}')
+        rgb_img_dir = osp.join(room_output_dir, 'rgb')
         
         target_pano_height, target_pano_width = 512, 1024
         if True:
@@ -560,15 +575,19 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                 print(f"WARNING: {raw_rgb_img_path} is empty!!")
                 continue
             
-            os.makedirs(camera_output_dir, exist_ok=True)
-            rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+            # os.makedirs(camera_output_dir, exist_ok=True)
+            # rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
+            os.makedirs(rgb_img_dir, exist_ok=True)
+            rgb_img.save(osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png'))
         
         # convert cubemap to panorama, and copy rgb panroama
             cube2panorama(input_dir=rast_view_folder, 
-                        output_dir=camera_output_dir,
+                        # output_dir=camera_output_dir,
+                        output_dir=room_output_dir,
                         pano_height=target_pano_height,
                         pano_width=target_pano_width, 
-                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'])
+                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'],
+                        camera_id=new_cam_id_in_room,)
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             instance_meta=meta_data_dict['instance_meta'],
