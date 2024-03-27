@@ -31,19 +31,19 @@ class Perspective:
             per = P2E.Perspective(img, F, P, T, channel=self.channel, interpolation=self.interpolation)        # Load equirectangular image
             img , mask = per.GetEquirec(height,width)   # Specify parameters(FOV, theta, phi, height, width)
             if self.average:
-            merge_image += img
+                merge_image += img
             else:
                 merge_image = np.where(merge_image==0, img, merge_image)
             merge_mask +=mask
 
         if self.average:
-        merge_mask = np.where(merge_mask==0,1,merge_mask)
-        merge_image = (np.divide(merge_image,merge_mask))
+            merge_mask = np.where(merge_mask==0,1,merge_mask)
+            merge_image = (np.divide(merge_image,merge_mask))
         else:
             merge_mask = np.where(merge_mask>0,1,0)
-        
+
         return merge_image, merge_mask
-        
+
 
 
 
