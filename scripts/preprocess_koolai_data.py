@@ -74,13 +74,13 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
     img_list.append(img.crop((2 * face_w, 0, 3 * face_w, h)))
     # down face
     img_list.append(img.crop((3 * face_w, 0, 4 * face_w, h)))
-    
+
     if len(img.split()) >= 3:
         img_list = np.array([np.array(img)[:,:,:3] for img in img_list])
     elif len(img.split()) == 1:
         # img_list = np.array([np.repeat(np.array(img)[:,:,np.newaxis], 3, axis=2) for img in img_list])
         if image_type == 'depth':
-            img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint16) for img in img_list])
+            img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.int32) for img in img_list])
         elif image_type == 'semantic':
             img_list = [decode_nyu40_semantic_image(np.asarray(img)) for img in img_list]
             img_list = np.array(img_list)
@@ -90,7 +90,7 @@ def read_koolai_cubemap_image(image_path:str, image_type:str='albedo')->List[np.
             img_list = np.array([np.array(img)[:,:,np.newaxis].astype(np.uint8) for img in img_list])
     else:
         raise ValueError(f'unsupport image shape: {img.shape}')
-        
+
     # print(f'img_list: {img_list[0].shape}')
     # plt.imshow(img_list[0])
     # plt.show()
@@ -164,7 +164,7 @@ def cube2panorama(input_dir:str,
         img_channel = faces_img_lst[0].shape[-1]
 
         kwargs = {}
-        if img_type in ['semantic', 'instance']:
+        if img_type in ['semantic', 'instance', 'depth']:
             kwargs['interpolation'] = cv2.INTER_NEAREST
             kwargs['average'] = False
         else:
@@ -174,7 +174,8 @@ def cube2panorama(input_dir:str,
         per = m_P2E.Perspective(faces_img_lst, F_P_T_lst, channel=img_channel, **kwargs)
         img, mask = per.GetEquirec(pano_height, pano_width)
         if img_type == 'depth':
-            img = (img*4).astype(np.uint16)
+            img = img.astype(np.int32)
+            img = np.where(mask > 0, img, -1)
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'albedo' or img_type == 'normal':
             img = img.astype(np.uint8)
@@ -404,6 +405,35 @@ def cam3d2rad(cam3d):
     return backend.stack([lon, lat], -1)
 
 
+def campix2rad(campix, width, height, K=None):
+    backend, atan2 = (torch, torch.atan2) if isinstance(campix, torch.Tensor) else (np, np.arctan2)
+    camrad = backend.empty_like(campix, dtype=backend.float32)
+    if K is not None:
+        camrad[..., 0] = atan2(
+            campix[..., 0] - K[..., 0, 2],
+            K[..., 0, 0]
+        )
+        camrad[..., 1] = atan2(
+            campix[..., 1] - K[..., 1, 2],
+            backend.sqrt(K[..., 0, 0] ** 2 + (campix[..., 0] - K[..., 0, 2]) ** 2)
+            / K[..., 0, 0] * K[..., 1, 1]
+        )
+    else:
+        camrad[..., 0] = (campix[..., 0] - width / 2. - 0.5) / width * (2. * np.pi)
+        camrad[..., 1] = (campix[..., 1] - height / 2. - 0.5) / height * np.pi
+    return camrad
+
+
+def camrad23d(rad, dis):
+        backend = torch if isinstance(rad, torch.Tensor) else np
+        proj_dis = backend.cos(rad[..., 1]) * dis
+        x = backend.sin(rad[..., 0]) * proj_dis
+        y = backend.sin(rad[..., 1]) * dis
+        z = backend.cos(rad[..., 0]) * proj_dis
+        cam3d = backend.stack([x, y, z]).T
+        return cam3d
+
+
 def camrad2pix(camrad, width, height):
     """
     Transform longitude and latitude of a point to panorama pixel coordinate.
@@ -573,9 +603,10 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         
 
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
-        camera_output_dir = osp.join(room_output_dir, f'{new_cam_id_in_room}')
+        camera_output_dir = osp.join(room_output_dir, 'debug', f'{new_cam_id_in_room}')
         rgb_img_dir = osp.join(room_output_dir, 'rgb')
-        
+        os.makedirs(camera_output_dir, exist_ok=True)
+
         target_pano_height, target_pano_width = 512, 1024
         if True:
             # copy rgb image
@@ -635,6 +666,19 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             pose_trimesh.apply_transform(cam_pose_c2w)
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
+
+            depth = np.array(Image.open(osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png')))
+            depth[depth < 0] = 0
+            depth = depth.astype(np.float32) * SCALE
+            # grid of pixel coordinates
+            x, y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))
+            pix = np.stack([x, y], axis=-1)
+            lat_lon = campix2rad(pix, depth.shape[1], depth.shape[0])
+            points = camrad23d(lat_lon, depth).reshape((-1, 3))
+            # cv to wsu
+            points = (R_wsu_cv @ points.T).T
+            trimesh.points.PointCloud(points).export(osp.join(camera_output_dir, 'depth_points.ply'))
+
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
