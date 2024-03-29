@@ -667,6 +667,11 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
 
+            instance_img = Image.open(osp.join(room_output_dir, 'instance', f'{new_cam_id_in_room}.png'))
+            instance_img = np.array(instance_img)
+            instance_img = decode_nyu40_semantic_image(instance_img, visited={})
+            Image.fromarray(instance_img).save(osp.join(camera_output_dir, 'instance.png'))
+
             pcd_file = osp.join(camera_output_dir, 'depth_points.ply')
             pcd = vis_color_pointcloud(
                 osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
