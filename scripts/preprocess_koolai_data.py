@@ -174,8 +174,8 @@ def cube2panorama(input_dir:str,
         per = m_P2E.Perspective(faces_img_lst, F_P_T_lst, channel=img_channel, **kwargs)
         img, mask = per.GetEquirec(pano_height, pano_width)
         if img_type == 'depth':
-            img = img.astype(np.int32)
-            img = np.where(mask > 0, img, -1)
+            img = img.astype(np.int32) * 4
+            img = np.where(mask > 0, img, 0)
             img = img.reshape((pano_height, pano_width))
         elif img_type == 'albedo' or img_type == 'normal':
             img = img.astype(np.uint8)
@@ -671,7 +671,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             pcd = vis_color_pointcloud(
                 osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
                 osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png'),
-                pcd_file, 1.0/SCALE, normaliz=False
+                pcd_file, 4000, normaliz=False
             )
 
         end_tms = time.time()
