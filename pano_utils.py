@@ -6,11 +6,11 @@ import cv2
 import open3d as o3d
 
 def np_coorx2u(coorx, coorW=1024):
-    return ((coorx + 0.5) / coorW - 0.5) * 2 * np.pi
+    return (coorx - (coorW * 0.5) - 0.5) / coorW * 2 * np.pi
 
 
 def np_coory2v(coory, coorH=512):
-    return -((coory + 0.5) / coorH - 0.5) * np.pi
+    return (coory - (coorH * 0.5) - 0.5) / coorH * np.pi
 
 
 def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_color_pcl_filepath:str, depth_scale:float=1000.0, normaliz:bool=False)->o3d.geometry.PointCloud:
@@ -26,13 +26,13 @@ def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_col
         w = 1024
 
         coorx, coory = np.meshgrid(np.arange(w), np.arange(h))
-        us = -np_coorx2u(coorx, w)
+        us = np_coorx2u(coorx, w)
         vs = np_coory2v(coory, h)
 
         X = np.expand_dims(np.cos(vs) * np.sin(us), 2)
         Y = np.expand_dims(np.cos(vs) * np.cos(us), 2)
         Z = np.expand_dims(np.sin(vs), 2)
-        unit_map = np.concatenate([X, Y, Z], axis=2)
+        unit_map = np.concatenate([X, Y, Z], axis=2) * -1
 
         return unit_map
 

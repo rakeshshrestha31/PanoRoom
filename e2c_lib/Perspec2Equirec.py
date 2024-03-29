@@ -79,6 +79,8 @@ class Perspective:
         mask = np.where((-self.w_len < xyz[:,:,0]) & (xyz[:,:,0] < self.w_len) &
                         (-self.h_len < xyz[:,:,2]) & (xyz[:,:,2] < self.h_len), 1, 0)
 
+        # INTER_NEAREST needed to avoid interpolation for depth, semantic, and instance map
+        # otherwise it will average nearby pixels
         persp = cv2.remap(self._img, lon_map.astype(np.float32), lat_map.astype(np.float32), self.interpolation, borderMode=cv2.BORDER_REPLICATE)
         
         mask = mask * inverse_mask

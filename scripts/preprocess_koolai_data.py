@@ -667,18 +667,12 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
             obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
 
-            depth = np.array(Image.open(osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png')))
-            depth[depth < 0] = 0
-            depth = depth.astype(np.float32) * SCALE
-            # grid of pixel coordinates
-            x, y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))
-            pix = np.stack([x, y], axis=-1)
-            lat_lon = campix2rad(pix, depth.shape[1], depth.shape[0])
-            points = camrad23d(lat_lon, depth).reshape((-1, 3))
-            # cv to wsu
-            points = (R_wsu_cv @ points.T).T
-            trimesh.points.PointCloud(points).export(osp.join(camera_output_dir, 'depth_points.ply'))
-
+            pcd_file = osp.join(camera_output_dir, 'depth_points.ply')
+            pcd = vis_color_pointcloud(
+                osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
+                osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png'),
+                pcd_file, 1.0/SCALE, normaliz=False
+            )
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
