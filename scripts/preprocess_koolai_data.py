@@ -550,14 +550,14 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         return 0, 0
     
     print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
-    if os.path.exists(output_dir):
-        room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
-        num_rooms = len(room_folders)
-        if num_rooms > 0:
-            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
-            return num_rooms, num_cams
-    else:
-        os.makedirs(output_dir)
+    # if os.path.exists(output_dir):
+    #     room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+    #     num_rooms = len(room_folders)
+    #     if num_rooms > 0:
+    #         num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
+    #         return num_rooms, num_cams
+    # else:
+    #     os.makedirs(output_dir)
 
     rasterize_dir = rasterize_dirs[0]
     rgb_dir = rgb_dirs[0]
@@ -618,15 +618,11 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             if np.isnan(np.array(rgb_img).any()) or len(np.array(rgb_img)[np.array(rgb_img) > 0]) == 0:
                 print(f"WARNING: {raw_rgb_img_path} is empty!!")
                 continue
-            
-            # os.makedirs(camera_output_dir, exist_ok=True)
-            # rgb_img.save(osp.join(camera_output_dir, 'rgb.png'))
             os.makedirs(rgb_img_dir, exist_ok=True)
             rgb_img.save(osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png'))
         
         # convert cubemap to panorama, and copy rgb panroama
             cube2panorama(input_dir=rast_view_folder, 
-                        # output_dir=camera_output_dir,
                         output_dir=room_output_dir,
                         pano_height=target_pano_height,
                         pano_width=target_pano_width, 
@@ -645,39 +641,63 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             # generate room layout mesh in camera space
             cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
             cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
-            room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, camera_output_dir, camera_pose_w2c=cam_pose_w2c)
+            room_layout_dir = osp.join(room_output_dir, 'room_layout')
+            os.makedirs(room_layout_dir, exist_ok=True)
+            room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, room_layout_dir, camera_pose_w2c=cam_pose_w2c)
             if len(room_layout_dict) == 0:
                 print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
 
+            # visualize object bboxes
             raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
             rgb_img = np.array(Image.open(raw_rgb_img_path))
             pixs = obbs_to_pix(new_cam_meta_idct["bboxes"], rgb_img.shape[1], rgb_img.shape[0])
             rgb_img[pixs[:, 1], pixs[:, 0]] = [255, 0, 0]
-            Image.fromarray(rgb_img).save(osp.join(camera_output_dir, 'rgb_bbox.png'))
+            bbox_dir = osp.join(room_output_dir, 'bbox')
+            os.makedirs(bbox_dir, exist_ok=True)
+            saved_bbox_img_path = osp.join(bbox_dir, f'{new_cam_id_in_room}.png')
+            Image.fromarray(rgb_img).save(saved_bbox_img_path)
 
+            object_bbox_dir = osp.join(room_output_dir, 'object_bbox')
+            os.makedirs(object_bbox_dir, exist_ok=True)
             axis_kwargs = {"origin_size": 0.01, "axis_radius": 0.05, "axis_length": 1.0}
             obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes"])
             pose_trimesh = trimesh.creation.axis(**axis_kwargs)
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
-            obbs.export(osp.join(camera_output_dir, 'bboxes.ply'))
+            obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_cam.ply'))
 
             obbs = bboxes_to_trimesh(meta_data_dict['instance_meta'], scale=SCALE)
             pose_trimesh = trimesh.creation.axis(**axis_kwargs)
             pose_trimesh.apply_transform(cam_pose_c2w)
             obbs = trimesh.util.concatenate([obbs, pose_trimesh])
-            obbs.export(osp.join(camera_output_dir, 'bboxes_global.ply'))
+            obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_world.ply'))
+            
+            # check camera pose
+            depth_img_dir = osp.join(room_output_dir, 'depth')
+            points_dir = osp.join(room_output_dir, 'points3d')
+            os.makedirs(depth_img_dir, exist_ok=True)
+            os.makedirs(points_dir, exist_ok=True)
+            rgb_img_filepath = osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png')
+            depth_img_filepath = osp.join(depth_img_dir, f'{new_cam_id_in_room}.png')
+            saved_pcl_cam_filepath = osp.join(points_dir, f'{new_cam_id_in_room}_cam.ply')
+            vis_color_pointcloud(rgb_img_filepath, depth_img_filepath, depth_scale=4000.0, saved_color_pcl_filepath=saved_pcl_cam_filepath)
+            
+            # transform point cloud from camera space to world space
+            saved_color_pcl_filepath = osp.join(points_dir, f'{new_cam_id_in_room}_world.ply')
+            pcd = o3d.io.read_point_cloud(saved_pcl_cam_filepath)
+            pcd.transform(cam_pose_c2w)
+            o3d.io.write_point_cloud(saved_color_pcl_filepath, pcd)
 
             instance_img = Image.open(osp.join(room_output_dir, 'instance', f'{new_cam_id_in_room}.png'))
             instance_img = np.array(instance_img)
             instance_img = decode_nyu40_semantic_image(instance_img, visited={})
             Image.fromarray(instance_img).save(osp.join(camera_output_dir, 'instance.png'))
 
-            pcd_file = osp.join(camera_output_dir, 'depth_points.ply')
-            pcd = vis_color_pointcloud(
-                osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
-                osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png'),
-                pcd_file, 4000, normaliz=False
-            )
+            # pcd_file = osp.join(camera_output_dir, 'depth_points.ply')
+            # pcd = vis_color_pointcloud(
+            #     osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
+            #     osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png'),
+            #     pcd_file, 4000, normaliz=False
+            # )
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")
