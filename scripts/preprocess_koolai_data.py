@@ -21,9 +21,9 @@ import trimesh
 import open3d as o3d
 
 from e2c_lib import multi_Perspec2Equirec as m_P2E
-from pano_utils import vis_color_pointcloud
-from meta import NYU40_LABEL_TO_ADEK_COLOR
-from geometry_utils import create_spatial_quad_polygen
+from utils.pano_utils import vis_color_pointcloud
+from utils.meta import NYU40_LABEL_TO_ADEK_COLOR
+from utils.geometry_utils import create_spatial_quad_polygen
 
 
 SCALE = 0.001
@@ -550,14 +550,14 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         return 0, 0
     
     print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
-    # if os.path.exists(output_dir):
-    #     room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
-    #     num_rooms = len(room_folders)
-    #     if num_rooms > 0:
-    #         num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
-    #         return num_rooms, num_cams
-    # else:
-    #     os.makedirs(output_dir)
+    if os.path.exists(output_dir):
+        room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+        num_rooms = len(room_folders)
+        if num_rooms > 0:
+            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
+            return num_rooms, num_cams
+    else:
+        os.makedirs(output_dir)
 
     rasterize_dir = rasterize_dirs[0]
     rgb_dir = rgb_dirs[0]
@@ -599,7 +599,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         room_output_dir = osp.join(output_dir, f'room_{room_id_str}')
         os.makedirs(room_output_dir, exist_ok=True)
         if room_id_str not in camera_stat_dict:
-            camera_stat_dict[room_id_str] = []
+            camera_stat_dict[room_id_str] = {}
         
 
         new_cam_id_in_room = len(camera_stat_dict[room_id_str])
@@ -628,6 +628,11 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                         pano_width=target_pano_width, 
                         convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'],
                         camera_id=new_cam_id_in_room,)
+            
+            # TODO: filter out images that penetrate the wall or objects
+            # solution1: use average/min/max depth to filter out images that are too close to the wall or object
+            # solution2: use pretrained panorama-to-RoomLayout model to filter out images that are inside the wall or object
+            
         # new camera meta data
         new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
                                             instance_meta=meta_data_dict['instance_meta'],
@@ -635,7 +640,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                                             new_cam_id=new_cam_id_in_room, 
                                             new_img_height=target_pano_height, 
                                             new_img_width=target_pano_width)
-        camera_stat_dict[room_id_str].append({new_cam_id_in_room: new_cam_meta_idct})
+        camera_stat_dict[room_id_str][new_cam_id_in_room] = new_cam_meta_idct
         
         if debug:
             # generate room layout mesh in camera space
@@ -692,12 +697,6 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             instance_img = decode_nyu40_semantic_image(instance_img, visited={})
             Image.fromarray(instance_img).save(osp.join(camera_output_dir, 'instance.png'))
 
-            # pcd_file = osp.join(camera_output_dir, 'depth_points.ply')
-            # pcd = vis_color_pointcloud(
-            #     osp.join(room_output_dir, 'rgb', f'{new_cam_id_in_room}.png'),
-            #     osp.join(room_output_dir, 'depth', f'{new_cam_id_in_room}.png'),
-            #     pcd_file, 4000, normaliz=False
-            # )
 
         end_tms = time.time()
         print(f"---------------- process scene {osp.basename(input_root_dir)} room {room_id_str} camera {new_cam_id_in_room} time: {end_tms - begin_tms} ----------------")

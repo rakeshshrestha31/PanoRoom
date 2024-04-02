@@ -15,7 +15,7 @@ import open3d as o3d
 import trimesh
 from transforms3d import utils, axangles
 
-from geometry_utils import create_spatial_quad_polygen
+from utils.geometry_utils import create_spatial_quad_polygen
 from scripts.preprocess_koolai_data import (
     parse_user_output, adjust_cam_meta, parse_room_meta,
     get_room_lineset, get_room_bounds, obbs_to_pix,
