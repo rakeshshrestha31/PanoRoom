@@ -6,11 +6,15 @@ import cv2
 import open3d as o3d
 
 def np_coorx2u(coorx, coorW=1024):
-    return (coorx - (coorW * 0.5) - 0.5) / coorW * 2 * np.pi
+    # convert image coordinate to spherical coordinate
+    # move coordinate to the center of pixel
+    return (coorx - (coorW * 0.5) + 0.5) / coorW * 2 * np.pi
 
 
 def np_coory2v(coory, coorH=512):
-    return (coory - (coorH * 0.5) - 0.5) / coorH * np.pi
+    # convert image coordinate to spherical coordinate
+    # move coordinate to the center of pixel
+    return (coory - (coorH * 0.5) + 0.5) / coorH * np.pi
 
 
 def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_color_pcl_filepath:str, depth_scale:float=1000.0, normaliz:bool=False)->o3d.geometry.PointCloud:
@@ -84,4 +88,3 @@ def vis_color_pointcloud(rgb_img_filepath:str, depth_img_filepath:str, saved_col
     # display_inlier_outlier(o3d_pointcloud, ind)
     o3d.io.write_point_cloud(saved_color_pcl_filepath, o3d_pointcloud)
     return o3d_pointcloud
-
