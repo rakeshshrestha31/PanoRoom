@@ -566,7 +566,7 @@ def is_depth_valid(depth_img_filepath):
         depth = cv2.cvtColor(depth, cv2.COLOR_BGR2GRAY)
     depth = np.asarray(depth)
     # the unit of depth is mm x 4 (1mm = 4 units)
-    min_depth_mm_x4 = 50
+    min_depth_mm_x4 = 80
     return not np.any((depth != 0) & (depth < min_depth_mm_x4))
 
 
