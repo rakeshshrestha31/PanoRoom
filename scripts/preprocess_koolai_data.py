@@ -531,6 +531,45 @@ def bboxes_to_trimesh(bboxes, scale=1.0):
     return obbs
 
 
+def check_camera_bbox_intersection(new_cam_meta_idct: Dict):
+    # bboxes in camera coordinate
+    c2w = np.eye(4)
+    cam_position = np.zeros(3)
+    cam_vec = o3d.utility.Vector3dVector(cam_position[np.newaxis, :])
+
+    for bbox in new_cam_meta_idct["bboxes"]:
+        T = np.array(bbox["transform"]).reshape(4, 4)
+        T_w_bbox = T
+        T_bbox_w = np.linalg.inv(T_w_bbox)
+        # can inflate the bbox for some margin
+        size = np.array(bbox["size"]) * 1.0
+
+        # camera position in bbox coordinate
+        cam_nocs = T_bbox_w[:3, :3] @ cam_position + T_bbox_w[:3, 3]
+        # normalized box coordinate system
+        cam_nocs = cam_nocs / size
+        # check if the camera is inside the bbox
+        if np.all(np.abs(cam_nocs) <= 0.5):
+            return True
+
+        ## o3d obb has issue (point close to the boundary of the obb will be considered inside the obb)
+        # obb = o3d.geometry.OrientedBoundingBox(T[:3, 3:4], T[:3, :3], size)
+        # if obb.get_point_indices_within_bounding_box(cam_vec):
+        #     return True
+
+    return False
+
+
+def is_depth_valid(depth_img_filepath):
+    depth = cv2.imread(depth_img_filepath, cv2.IMREAD_UNCHANGED)
+    if len(depth.shape) == 3:
+        depth = cv2.cvtColor(depth, cv2.COLOR_BGR2GRAY)
+    depth = np.asarray(depth)
+    # the unit of depth is mm x 4 (1mm = 4 units)
+    min_depth_mm_x4 = 50
+    return not np.any((depth != 0) & (depth < min_depth_mm_x4))
+
+
 import time
 def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) -> int:
     """ parse a single scene, split into multiple rooms
@@ -608,6 +647,22 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         os.makedirs(camera_output_dir, exist_ok=True)
 
         target_pano_height, target_pano_width = 512, 1024
+
+        # new camera meta data
+        new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
+                                            instance_meta=meta_data_dict['instance_meta'],
+                                            room_id=int(room_id_str),
+                                            new_cam_id=new_cam_id_in_room,
+                                            new_img_height=target_pano_height,
+                                            new_img_width=target_pano_width)
+
+        ## filter out images that penetrate the wall or objects
+        ## doesn't work well. some bboxes don't occlude the camera (e.g. windows)
+        # invalid_cam = check_camera_bbox_intersection(new_cam_meta_idct)
+        # if invalid_cam:
+        #     print(f"WARNING: {rgb_view_folder} {room_id_str} {new_cam_id_in_room} has invalid camera pose!")
+        #     continue
+
         if True:
             # copy rgb image
             raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
@@ -620,26 +675,25 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                 continue
             os.makedirs(rgb_img_dir, exist_ok=True)
             rgb_img.save(osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png'))
-        
-        # convert cubemap to panorama, and copy rgb panroama
-            cube2panorama(input_dir=rast_view_folder, 
+
+            # convert cubemap to panorama, and copy rgb panroama
+            convert_keys = ['albedo', 'depth', 'normal', 'instance', 'semantic']
+            cube2panorama(input_dir=rast_view_folder,
                         output_dir=room_output_dir,
                         pano_height=target_pano_height,
-                        pano_width=target_pano_width, 
-                        convert_keys=['albedo', 'depth', 'normal', 'instance', 'semantic'],
+                        pano_width=target_pano_width,
+                        convert_keys=convert_keys,
                         camera_id=new_cam_id_in_room,)
-            
-            # TODO: filter out images that penetrate the wall or objects
-            # solution1: use average/min/max depth to filter out images that are too close to the wall or object
-            # solution2: use pretrained panorama-to-RoomLayout model to filter out images that are inside the wall or object
-            
-        # new camera meta data
-        new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
-                                            instance_meta=meta_data_dict['instance_meta'],
-                                            room_id=int(room_id_str), 
-                                            new_cam_id=new_cam_id_in_room, 
-                                            new_img_height=target_pano_height, 
-                                            new_img_width=target_pano_width)
+
+            ## filter out images with low depth
+            depth_img_dir = osp.join(room_output_dir, 'depth')
+            depth_img_filepath = osp.join(depth_img_dir, f'{new_cam_id_in_room}.png')
+            if not is_depth_valid(depth_img_filepath):
+                print(f"WARNING: {rgb_view_folder} room_{room_id_str} cam_{new_cam_id_in_room} has invalid depth value!!")
+                for key in convert_keys:
+                    os.remove(osp.join(room_output_dir, f'{key}', f'{new_cam_id_in_room}.png'))
+                continue
+
         camera_stat_dict[room_id_str][new_cam_id_in_room] = new_cam_meta_idct
         
         if debug:
