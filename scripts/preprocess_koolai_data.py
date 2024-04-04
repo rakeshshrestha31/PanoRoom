@@ -23,7 +23,10 @@ import open3d as o3d
 from e2c_lib import multi_Perspec2Equirec as m_P2E
 from utils.pano_utils import vis_color_pointcloud
 from utils.meta import NYU40_LABEL_TO_ADEK_COLOR
-from utils.geometry_utils import create_spatial_quad_polygen
+from utils.geometry_utils import (create_spatial_quad_polygen, \
+                                convert_oriented_box_to_trimesh_fmt, \
+                                create_oriented_bboxes, \
+                                check_bbox_in_room)
 
 
 SCALE = 0.001
@@ -222,7 +225,7 @@ def parse_user_output(structure_json_path:str)->dict:
     
     return dict(camera_meta=camera_meta, room_meta=room_meta, instance_meta=instance_meta)
 
-def adjust_cam_meta(raw_cam_meta_dict:Dict, instance_meta:List, room_id:int, new_cam_id:int, new_img_height:int, new_img_width:int)->Dict:
+def adjust_cam_meta(raw_cam_meta_dict:Dict, room_meta_lst: List, instance_meta:List, room_id:int, new_cam_id:int, new_img_height:int, new_img_width:int)->Dict:
     new_cam_meta_dict = {}
     new_cam_meta_dict["camera_id"] = new_cam_id
     new_cam_meta_dict["room_id"] = room_id
@@ -266,31 +269,73 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, instance_meta:List, room_id:int, new
     # w2c = axis_mat @ w2c
     new_cam_meta_dict["camera_transform"] = w2c.flatten().tolist()
     
-    # convert pose from w2c to c2w
-    # raw_cam_pose = np.array(raw_cam_meta_dict["camera_transform"]).reshape((4, 4))
-    # new_cam_pose = np.linalg.inv(raw_cam_pose)
-    # new_cam_pose[:3, 3] *= SCALE
-    # new_cam_pose = new_cam_pose.flatten().tolist()
-    # new_cam_meta_dict["camera_transform"] = new_cam_pose
-    
     new_cam_meta_dict["image_height"] = new_img_height
     new_cam_meta_dict["image_width"] = new_img_width
 
-    bboxes = []
-    for bbox in instance_meta:
-        T = np.array(bbox["transform"]).reshape(4, 4)
-        T[:3, 3] = T[:3, 3] * SCALE
-        T = w2c @ T
-        size = np.array(bbox["size"]) * SCALE
+    # parse RoomLayout in camera space
+    room_meta_dict = {}
+    quad_wall_mesh = None
+    for room_meta in room_meta_lst:
+        if room_meta['id'] == str(room_id):
+            room_meta_dict['floor'] = room_meta['floor'].copy()
+            room_meta_dict['ceil'] = room_meta['ceil'].copy()
+            break
+    # if room_id is not in the meta data
+    if 'floor' in room_meta_dict.keys() and 'ceil' in room_meta_dict.keys():
+        # parse floor and veil corners
+        def parse_corners(corners:List[Dict[str, float]])->np.ndarray:
+            corner_lst = []
+            for corner in corners:
+                corner_lst.append([float(corner['start']['x']), float(corner['start']['y']), float(corner['start']['z'])])
+                corner_lst.append([float(corner['end']['x']), float(corner['end']['y']), float(corner['end']['z'])])
+            return np.array(corner_lst)
 
-        bbox = deepcopy(bbox)
-        bbox["transform"] = T.flatten().tolist()
-        bbox["size"] = size.tolist()
-        bboxes.append(bbox)
+        floor_points_lst = parse_corners(room_meta_dict['floor'])
+        ceil_points_lst = parse_corners(room_meta_dict['ceil'])
+        assert len(floor_points_lst) == len(ceil_points_lst)
+        assert len(floor_points_lst) % 2 == 0
+
+        quad_wall_mesh_lst = []
+        for i in range(len(floor_points_lst)//2):
+            floor_corner_i = floor_points_lst[i*2]
+            floor_corner_j = floor_points_lst[i*2+1]
+            ceil_corner_i = ceil_points_lst[i*2]
+            ceil_corner_j = ceil_points_lst[i*2+1]
+            # 3D coordinate for each wall
+            quad_corners = np.array([floor_corner_i, ceil_corner_i, ceil_corner_j, floor_corner_j]) * SCALE
+            # transform world point to camera point
+            quad_corners = (w2c[:3, :3] @ quad_corners.T).T + w2c[:3, 3]
+            wall_mesh = create_spatial_quad_polygen(quad_corners)
+            quad_wall_mesh_lst.append(wall_mesh)
+
+        quad_wall_mesh = trimesh.util.concatenate(quad_wall_mesh_lst)
+    else:
+        print(f'WARNING: room_id {room_id} is not in the meta data')
+            
+    bboxes = []
+    # only add the bbox in the room
+    if quad_wall_mesh is not None:
+        layout_bbox_min = trimesh.bounds.corners(quad_wall_mesh.bounding_box_oriented.bounds).min(axis=0)
+        layout_bbox_max = trimesh.bounds.corners(quad_wall_mesh.bounding_box_oriented.bounds).max(axis=0)
+        for bbox in instance_meta:
+            T = np.array(bbox["transform"]).reshape(4, 4)
+            T[:3, 3] = T[:3, 3] * SCALE
+            T = w2c @ T
+            size = np.array(bbox["size"]) * SCALE
+
+            # check if the bbox is in the room
+            bbox = deepcopy(bbox)
+            bbox["transform"] = T.flatten().tolist()
+            bbox["size"] = size.tolist()
+            if check_bbox_in_room(bbox, 
+                                  room_layout_mesh=quad_wall_mesh, 
+                                  layout_bbox_min=layout_bbox_min, 
+                                  layout_bbox_max=layout_bbox_max):
+                bboxes.append(bbox)
 
     new_cam_meta_dict["bboxes"] = bboxes
 
-    return new_cam_meta_dict
+    return new_cam_meta_dict, quad_wall_mesh
 
 
 def parse_room_meta(meta_data_dict:Dict, room_id_str:str, room_output_dir:str, camera_pose_w2c:np.array=None)->Dict:
@@ -533,9 +578,9 @@ def bboxes_to_trimesh(bboxes, scale=1.0):
 
 def check_camera_bbox_intersection(new_cam_meta_idct: Dict):
     # bboxes in camera coordinate
-    c2w = np.eye(4)
-    cam_position = np.zeros(3)
-    cam_vec = o3d.utility.Vector3dVector(cam_position[np.newaxis, :])
+    cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
+    cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
+    cam_position = cam_pose_c2w[:3, 3]
 
     for bbox in new_cam_meta_idct["bboxes"]:
         T = np.array(bbox["transform"]).reshape(4, 4)
@@ -560,14 +605,20 @@ def check_camera_bbox_intersection(new_cam_meta_idct: Dict):
     return False
 
 
-def is_depth_valid(depth_img_filepath):
+def is_depth_valid(depth_img_filepath, depth_scale:float=4000.0, min_depth_threshold:float=0.05, avg_depth_threshold:float=1.0):
+    """ check if the depth image is valid
+    
+    min_depth_threshold: 0.05m
+    avg_depth_threshold: 1m
+    return True if the depth image is valid
+    """
     depth = cv2.imread(depth_img_filepath, cv2.IMREAD_UNCHANGED)
     if len(depth.shape) == 3:
         depth = cv2.cvtColor(depth, cv2.COLOR_BGR2GRAY)
-    depth = np.asarray(depth)
-    # the unit of depth is mm x 4 (1mm = 4 units)
-    min_depth_mm_x4 = 80
-    return not np.any((depth != 0) & (depth < min_depth_mm_x4))
+    depth = np.asarray(depth)/depth_scale
+    avg_depth = np.mean(depth[depth != 0])
+    print(f"min_depth: {np.min(depth[depth != 0])}, avg_depth: {avg_depth}")
+    return (not np.any(depth[depth != 0] < min_depth_threshold)) & (avg_depth > avg_depth_threshold)
 
 
 import time
@@ -589,14 +640,14 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         return 0, 0
     
     print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
-    if os.path.exists(output_dir):
-        room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
-        num_rooms = len(room_folders)
-        if num_rooms > 0:
-            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
-            return num_rooms, num_cams
-    else:
-        os.makedirs(output_dir)
+    # if os.path.exists(output_dir):
+    #     room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+    #     num_rooms = len(room_folders)
+    #     if num_rooms > 0:
+    #         num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
+    #         return num_rooms, num_cams
+    # else:
+    #     os.makedirs(output_dir)
 
     rasterize_dir = rasterize_dirs[0]
     rgb_dir = rgb_dirs[0]
@@ -649,7 +700,8 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         target_pano_height, target_pano_width = 512, 1024
 
         # new camera meta data
-        new_cam_meta_idct = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
+        new_cam_meta_idct, roomlayout_mesh = adjust_cam_meta(raw_cam_meta_dict=camera_meta_dict,
+                                            room_meta_lst=meta_data_dict['room_meta'],
                                             instance_meta=meta_data_dict['instance_meta'],
                                             room_id=int(room_id_str),
                                             new_cam_id=new_cam_id_in_room,
@@ -685,10 +737,10 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                         convert_keys=convert_keys,
                         camera_id=new_cam_id_in_room,)
 
-            ## filter out images with low depth
+            ## filter out images with low average_depth
             depth_img_dir = osp.join(room_output_dir, 'depth')
             depth_img_filepath = osp.join(depth_img_dir, f'{new_cam_id_in_room}.png')
-            if not is_depth_valid(depth_img_filepath):
+            if not is_depth_valid(depth_img_filepath, depth_scale=4000.0, min_depth_threshold=0.05, avg_depth_threshold=1.0):
                 print(f"WARNING: {rgb_view_folder} room_{room_id_str} cam_{new_cam_id_in_room} has invalid depth value!!")
                 for key in convert_keys:
                     os.remove(osp.join(room_output_dir, f'{key}', f'{new_cam_id_in_room}.png'))
@@ -700,11 +752,11 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             # generate room layout mesh in camera space
             cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
             cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
-            room_layout_dir = osp.join(room_output_dir, 'room_layout')
-            os.makedirs(room_layout_dir, exist_ok=True)
-            room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, room_layout_dir, camera_pose_w2c=cam_pose_w2c)
-            if len(room_layout_dict) == 0:
-                print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
+            # room_layout_dir = osp.join(room_output_dir, 'room_layout')
+            # os.makedirs(room_layout_dir, exist_ok=True)
+            # room_layout_dict = parse_room_meta(meta_data_dict, room_id_str, room_layout_dir, camera_pose_w2c=cam_pose_w2c)
+            # if len(room_layout_dict) == 0:
+            #     print(f"WARNING: room_id_str: {room_id_str} not in {structure_json_path}")
 
             # visualize object bboxes
             raw_rgb_img_path = osp.join(rgb_view_folder, 'cubic.jpg')
@@ -716,18 +768,27 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
             saved_bbox_img_path = osp.join(bbox_dir, f'{new_cam_id_in_room}.png')
             Image.fromarray(rgb_img).save(saved_bbox_img_path)
 
+            # object_bbox_dir = osp.join(room_output_dir, 'object_bbox')
+            # os.makedirs(object_bbox_dir, exist_ok=True)
+            # axis_kwargs = {"origin_size": 0.01, "axis_radius": 0.05, "axis_length": 1.0}
+            # obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes"])
+            # pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            # obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            # obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_cam.ply'))
+
+            # obbs = bboxes_to_trimesh(meta_data_dict['instance_meta'], scale=SCALE)
+            # pose_trimesh = trimesh.creation.axis(**axis_kwargs)
+            # pose_trimesh.apply_transform(cam_pose_c2w)
+            # obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            # obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_world.ply'))
+            
             object_bbox_dir = osp.join(room_output_dir, 'object_bbox')
             os.makedirs(object_bbox_dir, exist_ok=True)
-            axis_kwargs = {"origin_size": 0.01, "axis_radius": 0.05, "axis_length": 1.0}
-            obbs = bboxes_to_trimesh(new_cam_meta_idct["bboxes"])
-            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
-            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            obbs = create_oriented_bboxes(new_cam_meta_idct["bboxes"])
+            obbs = trimesh.util.concatenate([obbs, roomlayout_mesh])
             obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_cam.ply'))
 
-            obbs = bboxes_to_trimesh(meta_data_dict['instance_meta'], scale=SCALE)
-            pose_trimesh = trimesh.creation.axis(**axis_kwargs)
-            pose_trimesh.apply_transform(cam_pose_c2w)
-            obbs = trimesh.util.concatenate([obbs, pose_trimesh])
+            obbs = create_oriented_bboxes(meta_data_dict['instance_meta'], scale=SCALE)
             obbs.export(osp.join(object_bbox_dir, f'{new_cam_id_in_room}_world.ply'))
             
             # check camera pose
