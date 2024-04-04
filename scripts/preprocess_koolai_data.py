@@ -640,14 +640,14 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
         return 0, 0
     
     print(f"---------------- process scene {osp.basename(input_root_dir)} ----------------")
-    # if os.path.exists(output_dir):
-    #     room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
-    #     num_rooms = len(room_folders)
-    #     if num_rooms > 0:
-    #         num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
-    #         return num_rooms, num_cams
-    # else:
-    #     os.makedirs(output_dir)
+    if os.path.exists(output_dir):
+        room_folders = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+        num_rooms = len(room_folders)
+        if num_rooms > 0:
+            num_cams = sum([len([f for f in os.listdir(os.path.join(room_folder, 'rgb')) if f.endswith('.png')]) for room_folder in room_folders])
+            return num_rooms, num_cams
+    else:
+        os.makedirs(output_dir)
 
     rasterize_dir = rasterize_dirs[0]
     rgb_dir = rgb_dirs[0]
