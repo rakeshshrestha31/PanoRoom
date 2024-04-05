@@ -303,33 +303,39 @@ def adjust_cam_meta(raw_cam_meta_dict:Dict, room_meta_lst: List, instance_meta:L
             ceil_corner_j = ceil_points_lst[i*2+1]
             # 3D coordinate for each wall
             quad_corners = np.array([floor_corner_i, ceil_corner_i, ceil_corner_j, floor_corner_j]) * SCALE
-            # transform world point to camera point
-            quad_corners = (w2c[:3, :3] @ quad_corners.T).T + w2c[:3, 3]
             wall_mesh = create_spatial_quad_polygen(quad_corners)
             quad_wall_mesh_lst.append(wall_mesh)
 
-        quad_wall_mesh = trimesh.util.concatenate(quad_wall_mesh_lst)
+        quad_wall_mesh_world = trimesh.util.concatenate(quad_wall_mesh_lst)
+        # transform world point to camera point
+        quad_wall_mesh = deepcopy(quad_wall_mesh_world)
+        quad_wall_mesh.apply_transform(w2c)
     else:
         print(f'WARNING: room_id {room_id} is not in the meta data')
-            
+
     bboxes = []
     # only add the bbox in the room
     if quad_wall_mesh is not None:
-        layout_bbox_min = trimesh.bounds.corners(quad_wall_mesh.bounding_box_oriented.bounds).min(axis=0)
-        layout_bbox_max = trimesh.bounds.corners(quad_wall_mesh.bounding_box_oriented.bounds).max(axis=0)
+        layout_bbox_min = trimesh.bounds.corners(quad_wall_mesh_world.bounding_box_oriented.bounds).min(axis=0)
+        layout_bbox_max = trimesh.bounds.corners(quad_wall_mesh_world.bounding_box_oriented.bounds).max(axis=0)
         for bbox in instance_meta:
-            T = np.array(bbox["transform"]).reshape(4, 4)
-            T[:3, 3] = T[:3, 3] * SCALE
-            T = w2c @ T
+            T_world = np.array(bbox["transform"]).reshape(4, 4)
+            T_world[:3, 3] = T_world[:3, 3] * SCALE
+            T_cam = w2c @ T_world
             size = np.array(bbox["size"]) * SCALE
+
+            bbox_world = deepcopy(bbox)
+            bbox_world["transform"] = T_world.flatten().tolist()
+            bbox_world["size"] = size.tolist()
 
             # check if the bbox is in the room
             bbox = deepcopy(bbox)
-            bbox["transform"] = T.flatten().tolist()
+            bbox["transform"] = T_cam.flatten().tolist()
             bbox["size"] = size.tolist()
-            if check_bbox_in_room(bbox, 
-                                  room_layout_mesh=quad_wall_mesh, 
-                                  layout_bbox_min=layout_bbox_min, 
+
+            if check_bbox_in_room(bbox_world,
+                                  room_layout_mesh=quad_wall_mesh_world,
+                                  layout_bbox_min=layout_bbox_min,
                                   layout_bbox_max=layout_bbox_max):
                 bboxes.append(bbox)
 

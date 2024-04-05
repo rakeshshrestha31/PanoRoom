@@ -167,8 +167,8 @@ def check_bbox_in_room(bbox: Dict, room_layout_mesh: trimesh.Trimesh, layout_bbo
     """ check if the 3D bbox is in the room
 
     Args:
-        bbox (Dict): keys:{'id': , 'transform': , 'size': ,}, in camera space
-        room_layout_mesh (trimesh.Trimesh): room layout mesh in camera space
+        bbox (Dict): keys:{'id': , 'transform': , 'size': ,}
+        room_layout_mesh (trimesh.Trimesh): room layout mesh
         layout_bbox_min (np.array): min corner of room layout
         layout_bbox_max (np.array): max corner of room layout
         margin_dist (float, optional): margin distance. Defaults to 0.05.
