@@ -582,38 +582,9 @@ def bboxes_to_trimesh(bboxes, scale=1.0):
     return obbs
 
 
-def check_camera_bbox_intersection(new_cam_meta_idct: Dict):
-    # bboxes in camera coordinate
-    cam_pose_w2c = np.array(new_cam_meta_idct["camera_transform"]).reshape((4, 4))
-    cam_pose_c2w = np.linalg.inv(cam_pose_w2c)
-    cam_position = cam_pose_c2w[:3, 3]
-
-    for bbox in new_cam_meta_idct["bboxes"]:
-        T = np.array(bbox["transform"]).reshape(4, 4)
-        T_w_bbox = T
-        T_bbox_w = np.linalg.inv(T_w_bbox)
-        # can inflate the bbox for some margin
-        size = np.array(bbox["size"]) * 1.0
-
-        # camera position in bbox coordinate
-        cam_nocs = T_bbox_w[:3, :3] @ cam_position + T_bbox_w[:3, 3]
-        # normalized box coordinate system
-        cam_nocs = cam_nocs / size
-        # check if the camera is inside the bbox
-        if np.all(np.abs(cam_nocs) <= 0.5):
-            return True
-
-        ## o3d obb has issue (point close to the boundary of the obb will be considered inside the obb)
-        # obb = o3d.geometry.OrientedBoundingBox(T[:3, 3:4], T[:3, :3], size)
-        # if obb.get_point_indices_within_bounding_box(cam_vec):
-        #     return True
-
-    return False
-
-
 def is_depth_valid(depth_img_filepath, depth_scale:float=4000.0, min_depth_threshold:float=0.05, avg_depth_threshold:float=1.0):
     """ check if the depth image is valid
-    
+
     min_depth_threshold: 0.05m
     avg_depth_threshold: 1m
     return True if the depth image is valid
