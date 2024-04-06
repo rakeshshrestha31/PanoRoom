@@ -721,6 +721,7 @@ def parse_single_scene(input_root_dir:str, output_dir:str, debug: bool = False) 
                 print(f"WARNING: {rgb_view_folder} room_{room_id_str} cam_{new_cam_id_in_room} has invalid depth value!!")
                 for key in convert_keys:
                     os.remove(osp.join(room_output_dir, f'{key}', f'{new_cam_id_in_room}.png'))
+                os.remove(osp.join(rgb_img_dir, f'{new_cam_id_in_room}.png'))
                 continue
 
         camera_stat_dict[room_id_str][new_cam_id_in_room] = new_cam_meta_idct
